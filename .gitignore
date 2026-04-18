@@ -1,5 +1,7 @@
-data/files/
-data/audit/
+data/files/*
+!data/files/.gitkeep
+data/audit/*
+!data/audit/.gitkeep
 data/pricing_baseline.json
 data/fonts/*.ttf
 data/fonts/*.ttc
