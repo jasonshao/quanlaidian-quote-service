@@ -1,0 +1,14 @@
+data/files/
+data/audit/
+data/pricing_baseline.json
+data/fonts/*.ttf
+data/fonts/*.ttc
+data/fonts/*.otf
+.env
+__pycache__/
+*.egg-info/
+.venv/
+*.pyc
+.pytest_cache/
+dist/
+build/
