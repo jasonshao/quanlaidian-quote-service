@@ -1,0 +1,15 @@
+[Unit]
+Description=Quanlaidian Quote Service
+After=network.target
+
+[Service]
+Type=simple
+User=quanlaidian
+WorkingDirectory=/opt/quanlaidian-quote
+ExecStart=/opt/quanlaidian-quote/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 2
+EnvironmentFile=/opt/quanlaidian-quote/.env
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
