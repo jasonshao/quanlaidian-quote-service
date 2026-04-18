@@ -44,3 +44,35 @@ def test_render_pdf_full_meal(empty_baseline):
     pdf_bytes = render_pdf(config)
     assert pdf_bytes[:5] == b"%PDF-"
     assert len(pdf_bytes) > 1000
+
+
+# ============================================================
+# XLSX tests
+# ============================================================
+from app.domain.render_xlsx import render_xlsx
+
+
+def test_render_xlsx_returns_valid_xlsx(empty_baseline):
+    config = _build_config("form_light_meal_5_stores.json", empty_baseline)
+    xlsx_bytes = render_xlsx(config)
+    assert len(xlsx_bytes) > 1000
+    # XLSX is a ZIP file (starts with PK)
+    assert xlsx_bytes[:2] == b"PK"
+
+
+def test_render_xlsx_has_data(empty_baseline):
+    import openpyxl
+    import io
+    config = _build_config("form_light_meal_5_stores.json", empty_baseline)
+    xlsx_bytes = render_xlsx(config)
+    wb = openpyxl.load_workbook(io.BytesIO(xlsx_bytes))
+    assert len(wb.sheetnames) >= 1
+    ws = wb.active
+    assert ws.max_row > 5
+
+
+def test_render_xlsx_full_meal(empty_baseline):
+    config = _build_config("form_full_meal_10_stores.json", empty_baseline)
+    xlsx_bytes = render_xlsx(config)
+    assert xlsx_bytes[:2] == b"PK"
+    assert len(xlsx_bytes) > 1000
