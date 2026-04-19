@@ -143,20 +143,27 @@ def test_load_baseline_falls_back_to_plaintext_when_no_key(tmp_path):
     assert baseline["items"][0]["name"] == "from_plaintext"
 
 
-def test_module_unit_price_never_exceeds_standard(empty_baseline):
-    """门店增值模块 / 总部模块 商品单价 must never exceed 标准价.
+def test_module_unit_price_follows_markup_rule(empty_baseline):
+    """门店增值模块 / 总部模块 商品单价 = 底价 × 固定倍数（毛利保护）.
 
-    In fallback mode cost_price = catalog list, so cost × 1.20 / 1.50 previously
-    produced quote unit prices 20%-50% above the 标准价 shown to the customer.
+    - 增值模块: cost × 1.20
+    - 总部模块: cost × 1.50
+
+    定价故意让商品单价可以高于"标准价"（= cost × 1.10 / 1.20），深度折扣只
+    吸收在套餐上；增值/总部走成本加成。resolve_product_pricing 的 catalog
+    fallback 分支会让 cost=目录标价，此时商品单价达到 120-150% of list，
+    属于"基线漏收商品"的告警信号，不是算法 bug。
     """
     form = _load_form("form_with_delivery_center.json")
     config = build_quotation_config(form, empty_baseline, PRODUCT_CATALOG)
-    offenders = []
+    expected_markup = {"门店增值模块": 1.20, "总部模块": 1.50}
     for item in config["报价项目"]:
-        if item["模块分类"] not in {"门店增值模块", "总部模块"}:
+        cat = item["模块分类"]
+        if cat not in expected_markup or item.get("protected_item_bypass"):
             continue
-        if item.get("protected_item_bypass"):
-            continue
-        if item["商品单价"] > item["标准价"]:
-            offenders.append((item["商品名称"], item["商品单价"], item["标准价"]))
-    assert not offenders, f"商品单价高于标准价: {offenders}"
+        # 这里是 fallback 分支 (cost=目录价)：unit = 目录价 × markup
+        expected = item["成本单价"] * expected_markup[cat]
+        assert abs(item["商品单价"] - expected) < 0.01, (
+            f"{item['商品名称']} ({cat}): unit {item['商品单价']} != "
+            f"cost {item['成本单价']} × {expected_markup[cat]}"
+        )

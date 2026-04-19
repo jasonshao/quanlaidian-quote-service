@@ -1,8 +1,20 @@
-from fastapi import FastAPI, Request
-from app.api import quote, health, files
-from app.errors import register_exception_handlers
+from contextlib import asynccontextmanager
 
-app = FastAPI(title="Quanlaidian Quote Service", version="1.0.0")
+from fastapi import FastAPI, Request
+
+from app.api import quote, quotes, health, files, catalog
+from app.errors import register_exception_handlers
+from app.persistence import init_db
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    from app.config import settings  # late import: respects test monkeypatch
+    init_db(settings.data_root / "quote.db")
+    yield
+
+
+app = FastAPI(title="Quanlaidian Quote Service", version="1.0.0", lifespan=lifespan)
 
 register_exception_handlers(app)
 
@@ -15,5 +27,7 @@ async def add_request_id(request: Request, call_next):
     return response
 
 app.include_router(quote.router)
+app.include_router(quotes.router)
+app.include_router(catalog.router)
 app.include_router(health.router)
 app.include_router(files.router)

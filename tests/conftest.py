@@ -66,6 +66,8 @@ def api_client(test_data_root, test_token, monkeypatch):
     # Patch the global settings object in all modules that imported it
     monkeypatch.setattr(config_module, "settings", new_settings)
     monkeypatch.setattr("app.api.quote.settings", new_settings)
+    monkeypatch.setattr("app.api.quotes.settings", new_settings, raising=False)
+    monkeypatch.setattr("app.api.catalog.settings", new_settings, raising=False)
     monkeypatch.setattr("app.api.health.settings", new_settings, raising=False)
 
     # Override product catalog path lookup
@@ -79,10 +81,10 @@ def api_client(test_data_root, test_token, monkeypatch):
     tokens_path = test_data_root / "tokens.json"
     app.dependency_overrides[verify_token(new_settings.data_root / "tokens.json")] = verify_token(tokens_path)
 
-    client = TestClient(app, raise_server_exceptions=False)
-    yield client, test_token
+    # TestClient as context manager triggers FastAPI lifespan (runs init_db)
+    with TestClient(app, raise_server_exceptions=False) as client:
+        yield client, test_token
 
-    # Clean up dependency overrides after test
     app.dependency_overrides.clear()
 
 @pytest.fixture

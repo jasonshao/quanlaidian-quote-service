@@ -20,6 +20,20 @@ class RenderError(Exception):
         self.message = message
 
 
+class ApprovalPendingError(Exception):
+    def __init__(self, quote_id: str, reasons: list[str]):
+        self.quote_id = quote_id
+        self.reasons = reasons
+        self.message = f"quote {quote_id} 需要审批后才能渲染/下发"
+
+
+class NotFoundError(Exception):
+    def __init__(self, resource: str, resource_id: str):
+        self.resource = resource
+        self.resource_id = resource_id
+        self.message = f"{resource} {resource_id} 不存在或无权访问"
+
+
 def _error_response(
     request: Request,
     status: int,
@@ -62,6 +76,24 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(RenderError)
     async def render_handler(request: Request, exc: RenderError) -> JSONResponse:
         return _error_response(request, 500, "RENDER_FAILED", exc.message)
+
+    @app.exception_handler(ApprovalPendingError)
+    async def approval_pending_handler(request: Request, exc: ApprovalPendingError) -> JSONResponse:
+        request_id = getattr(request.state, "request_id", "unknown")
+        body = {
+            "error": {
+                "code": "APPROVAL_PENDING",
+                "message": exc.message,
+                "request_id": request_id,
+                "quote_id": exc.quote_id,
+                "approval_reasons": exc.reasons,
+            }
+        }
+        return JSONResponse(status_code=409, content=body)
+
+    @app.exception_handler(NotFoundError)
+    async def not_found_handler(request: Request, exc: NotFoundError) -> JSONResponse:
+        return _error_response(request, 404, "NOT_FOUND", exc.message, field=exc.resource)
 
     @app.exception_handler(Exception)
     async def catch_all_handler(request: Request, exc: Exception) -> JSONResponse:

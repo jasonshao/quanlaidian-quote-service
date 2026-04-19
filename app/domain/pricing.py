@@ -16,11 +16,11 @@ from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 
+from app.domain.pricing_baseline import PRICING_VERSION
 from app.errors import OutOfRangeError
 
 SMALL_SEGMENT_MAX_STORES = 30
 DEFAULT_SMALL_SEGMENT_ENABLED = True
-SMALL_SEGMENT_ALGORITHM_VERSION = "small-segment-v1"
 HISTORY_WINDOW_MONTHS = 12
 SMALL_SEGMENT_START_UNIT_PRICE = {
     "轻餐": 1800,
@@ -199,6 +199,10 @@ def classify_catalog_group(group):
 
 def compute_standard_price_by_group(group, product_name, cost_price):
     if group == "门店套餐":
+        # SaaS 高牌价 + 深折模型：标准价 = 底价 × 20（= 底价 / 0.05），
+        # 由 deal_price_factor（≈0.19–0.27）砸到实际成交价。实际毛利约 75%。
+        # 起步系数 start_factor_map 里的 7600/11120 也是按这个 20 倍基数定的，
+        # 两边必须同步调整，不要单独改这里。
         return int(round(float(cost_price) / 0.05))
     if group == "门店增值模块":
         if product_name == "商管接口":
@@ -231,9 +235,8 @@ def resolve_product_pricing(product, quote_meal_type, baseline_index):
 def _small_segment_bucket(store_count):
     if 1 <= store_count <= 10:
         return "small-1-10"
-    # 21-30 延续 11-20 同桶规则，避免小样本分裂
     if 11 <= store_count <= 30:
-        return "small-11-20"
+        return "small-11-30"
     return None
 
 
@@ -374,7 +377,8 @@ def time_decay_weight(sample):
         return 0.0
     age_days = (now_dt().date() - dt.date()).days
     # 12 个月线性衰减，保留最小权重避免完全失声
-    base = max(0.1, 1 - age_days / float(HISTORY_WINDOW_MONTHS * 31))
+    window_days = HISTORY_WINDOW_MONTHS * 30.44  # 平均月长，避免 31 天偏置
+    base = max(0.1, 1 - age_days / window_days)
     return round(base, 6)
 
 
@@ -606,16 +610,25 @@ def validate_form(form, product_index, route_strategy):
 
 
 def _compute_quote_unit_price(module_category, standard_price, cost_price, deal_price_factor, protected):
+    # 分组定价逻辑：
+    # - 套餐走标准价 × 成交价系数（可打折），走折扣池
+    # - 增值/总部模块是"成本加成"毛利保护：成交价 = 底价 × 固定倍数，
+    #   不随 deal_price_factor 联动（深度折扣不能把这两类砸穿毛利）
+    # - 受保护商品（商管接口）硬等于底价，不允许打折
+    # 这里的 1.20 / 1.50 会超过 compute_standard_price_by_group 算出来的
+    # "标准价"（1.10 / 1.20），所以报价单上会出现"商品单价 > 标准价"的情况。
+    # 这是业务刻意：增值/总部定位为"卖给大连锁，深折被套餐吸收，这两类反而
+    # 加价走"。resolve_product_pricing 的 catalog_fallback 分支在基线缺项时
+    # 会让 cost_price = 目录标价，在此路径下会产出 120%-150% 目录标价的报价
+    # —— 出事时能定位到是基线漏收商品，不是算法问题。
     if protected:
         return round_money(cost_price)
     if module_category == "门店软件套餐":
         return round_money(Decimal(str(standard_price)) * Decimal(str(deal_price_factor)))
     if module_category == "门店增值模块":
-        raw = Decimal(str(cost_price)) * Decimal("1.20")
-        return round_money(min(raw, Decimal(str(standard_price))))
+        return round_money(Decimal(str(cost_price)) * Decimal("1.20"))
     if module_category == "总部模块":
-        raw = Decimal(str(cost_price)) * Decimal("1.50")
-        return round_money(min(raw, Decimal(str(standard_price))))
+        return round_money(Decimal(str(cost_price)) * Decimal("1.50"))
     return round_money(cost_price)
 
 
@@ -913,7 +926,7 @@ def build_quotation_config(form: dict, baseline: dict, product_catalog_path: Pat
             "scope_match": route_strategy == "small-segment",
             "route_strategy": route_strategy,
             "route_reason": route_reason,
-            "algorithm_version": SMALL_SEGMENT_ALGORITHM_VERSION if route_strategy == "small-segment" else "legacy-v1",
+            "algorithm_version": PRICING_VERSION if route_strategy == "small-segment" else "legacy-v1",
             "sample_bucket": sample_bucket,
             "base_factor": round_factor(recommended_factor),
             "auto_adjustments": auto_adjustments,

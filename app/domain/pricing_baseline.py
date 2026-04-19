@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from secrets import token_bytes
 
-_PRICING_VERSION = "small-segment-v2.3"
+PRICING_VERSION = "small-segment-v2.3"
 
 OBFUSCATION_FORMAT = "pricing-baseline-obf-v1"
 KEY_ENV = "PRICING_BASELINE_KEY"
@@ -121,4 +121,4 @@ def load_baseline(json_path: Path, obf_path: Path | None = None) -> dict:
 
 
 def pricing_version() -> str:
-    return _PRICING_VERSION
+    return PRICING_VERSION
