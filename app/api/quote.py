@@ -67,7 +67,14 @@ def create_quote(
     baseline = _get_baseline()
     product_catalog_path = _get_product_catalog_path()
     form_dict = form.model_dump()
-    config = build_quotation_config(form_dict, baseline, product_catalog_path)
+    try:
+        config = build_quotation_config(form_dict, baseline, product_catalog_path)
+    except ValueError as e:
+        # Business-rule validation inside the pricing module — surface as actionable 400.
+        msg = str(e)
+        field = "人工改价原因" if "人工改价" in msg else None
+        hint = "提供 成交价系数 时必须同时填写 人工改价原因" if field else None
+        raise OutOfRangeError(field=field or "form", message=msg, hint=hint)
 
     # 2. Render files
     try:

@@ -28,6 +28,33 @@ def test_quote_200_returns_files(api_client, sample_form):
     assert body["preview"]["stores"] == 5
     assert body["pricing_version"] is not None
 
+def test_quote_400_factor_without_reason(api_client, sample_form):
+    """Regression for issue #1: providing 成交价系数 without 人工改价原因
+    must return 400 OUT_OF_RANGE, not 500 INTERNAL_ERROR."""
+    client, token = api_client
+    sample_form["成交价系数"] = 0.25
+    resp = client.post(
+        "/v1/quote",
+        json=sample_form,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 400, f"Expected 400, got {resp.status_code}: {resp.text}"
+    body = resp.json()
+    assert body["error"]["code"] == "OUT_OF_RANGE"
+    assert body["error"]["field"] == "人工改价原因"
+
+def test_quote_200_factor_with_reason(api_client, sample_form):
+    client, token = api_client
+    sample_form["成交价系数"] = 0.25
+    sample_form["人工改价原因"] = "总部战略客户"
+    resp = client.post(
+        "/v1/quote",
+        json=sample_form,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+    assert resp.json()["preview"]["discount"] == 0.25
+
 def test_quote_401_missing_token(api_client, sample_form):
     client, _ = api_client
     resp = client.post("/v1/quote", json=sample_form)

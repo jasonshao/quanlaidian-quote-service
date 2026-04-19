@@ -14,11 +14,12 @@ class QuoteForm(BaseModel):
     配送中心数量: int = Field(default=0, ge=0)
     生产加工中心数量: int = Field(default=0, ge=0)
     成交价系数: Optional[float] = Field(default=None, ge=0.01, le=1.0)
+    人工改价原因: Optional[str] = None
     是否启用阶梯报价: bool = False
     实施服务类型: Optional[str] = None
     实施服务人天: int = Field(default=0, ge=0)
 
-    @field_validator("实施服务类型", mode="before")
+    @field_validator("实施服务类型", "人工改价原因", mode="before")
     @classmethod
     def normalize_empty_string_to_none(cls, v: object) -> object:
         if v == "":

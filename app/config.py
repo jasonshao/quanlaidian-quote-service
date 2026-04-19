@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     file_ttl_days: int = 7
     log_level: str = "INFO"
 
-    model_config = {"env_prefix": "QUOTE_"}
+    model_config = {"env_prefix": "QUOTE_", "env_file": ".env", "extra": "ignore"}
 
 
 settings = Settings()

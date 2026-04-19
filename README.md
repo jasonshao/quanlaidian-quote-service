@@ -44,12 +44,13 @@ Generate a quotation. Returns a JSON preview and time-limited download URLs for 
 | `客户品牌名称` | string | ✅ | — | Customer brand name |
 | `餐饮类型` | string | ✅ | `"轻餐"` or `"正餐"` | Dining category |
 | `门店数量` | integer | ✅ | 1 – 30 | Number of stores |
-| `门店套餐` | string | ✅ | — | Store package name (e.g. `"旗舰版"`) |
+| `门店套餐` | string | ✅ | — | Store package name — must match a name in [`references/product_catalog.md`](references/product_catalog.md), e.g. `"轻餐连锁营销旗舰版"` or `"正餐连锁营销旗舰版"` |
 | `门店增值模块` | string[] | ❌ | — | Optional add-on modules per store |
 | `总部模块` | string[] | ❌ | — | Optional HQ-level modules |
 | `配送中心数量` | integer | ❌ | ≥ 0, default 0 | Number of distribution centres |
 | `生产加工中心数量` | integer | ❌ | ≥ 0, default 0 | Number of production/processing centres |
-| `成交价系数` | float | ❌ | 0.01 – 1.0 | Explicit deal-price coefficient (overrides computed discount) |
+| `成交价系数` | float | ❌ | 0.01 – 1.0 | Explicit deal-price coefficient (overrides computed discount). **If set, `人工改价原因` is required** — otherwise the request returns `400 OUT_OF_RANGE`. |
+| `人工改价原因` | string | ❌ | non-empty | Required when `成交价系数` is provided (audit trail for manual override) |
 | `是否启用阶梯报价` | boolean | ❌ | default `false` | Enable tiered pricing |
 | `实施服务类型` | string | ❌ | — | Implementation service type |
 | `实施服务人天` | integer | ❌ | ≥ 0, default 0 | Implementation service person-days |
@@ -61,7 +62,7 @@ Generate a quotation. Returns a JSON preview and time-limited download URLs for 
   "客户品牌名称": "示例品牌",
   "餐饮类型": "轻餐",
   "门店数量": 5,
-  "门店套餐": "旗舰版"
+  "门店套餐": "轻餐连锁营销旗舰版"
 }
 ```
 
@@ -72,12 +73,13 @@ Generate a quotation. Returns a JSON preview and time-limited download URLs for 
   "客户品牌名称": "示例品牌",
   "餐饮类型": "正餐",
   "门店数量": 10,
-  "门店套餐": "旗舰版",
-  "门店增值模块": ["会员营销模块"],
-  "总部模块": ["供应链管理"],
+  "门店套餐": "正餐连锁营销旗舰版",
+  "门店增值模块": ["厨房KDS"],
+  "总部模块": ["配送中心"],
   "配送中心数量": 1,
   "生产加工中心数量": 0,
   "成交价系数": 0.85,
+  "人工改价原因": "总部战略客户，CEO 特批",
   "是否启用阶梯报价": false,
   "实施服务类型": "标准实施",
   "实施服务人天": 5
@@ -94,7 +96,7 @@ Generate a quotation. Returns a JSON preview and time-limited download URLs for 
     "brand": "示例品牌",
     "meal_type": "正餐",
     "stores": 10,
-    "package": "旗舰版",
+    "package": "正餐连锁营销旗舰版",
     "discount": 0.85,
     "totals": {
       "list": 480000,
@@ -102,7 +104,7 @@ Generate a quotation. Returns a JSON preview and time-limited download URLs for 
     },
     "items": [
       {
-        "name": "全来店·旗舰版（正餐）",
+        "name": "正餐连锁营销旗舰版",
         "qty": 10,
         "list": 39800,
         "final": 33830
