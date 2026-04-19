@@ -38,7 +38,11 @@ def _get_storage() -> LocalDiskStorage:
     )
 
 def _get_baseline() -> dict:
-    return load_baseline(settings.data_root / "pricing_baseline.json")
+    repo_root = Path(__file__).resolve().parent.parent.parent
+    return load_baseline(
+        json_path=settings.data_root / "pricing_baseline.json",
+        obf_path=repo_root / "references" / "pricing_baseline_v5.obf",
+    )
 
 def _get_product_catalog_path() -> Path:
     # Product catalog lives alongside the app's references

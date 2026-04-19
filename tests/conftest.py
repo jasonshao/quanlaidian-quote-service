@@ -5,6 +5,18 @@ import pytest
 from pathlib import Path
 from fastapi.testclient import TestClient
 
+@pytest.fixture(autouse=True)
+def _isolate_baseline_env(monkeypatch):
+    """Keep pricing-baseline env vars out of the test process.
+
+    A developer with the real PRICING_BASELINE_KEY exported shouldn't silently
+    change test behavior, and PRICING_BASELINE_STRICT=1 in the shell would
+    break tests that exercise plaintext-baseline paths.
+    """
+    monkeypatch.delenv("PRICING_BASELINE_KEY", raising=False)
+    monkeypatch.delenv("PRICING_BASELINE_STRICT", raising=False)
+
+
 @pytest.fixture
 def test_data_root(tmp_path):
     """Create a temporary data root with required structure."""

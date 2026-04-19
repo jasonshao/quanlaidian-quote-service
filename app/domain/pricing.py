@@ -611,9 +611,11 @@ def _compute_quote_unit_price(module_category, standard_price, cost_price, deal_
     if module_category == "门店软件套餐":
         return round_money(Decimal(str(standard_price)) * Decimal(str(deal_price_factor)))
     if module_category == "门店增值模块":
-        return round_money(Decimal(str(cost_price)) * Decimal("1.20"))
+        raw = Decimal(str(cost_price)) * Decimal("1.20")
+        return round_money(min(raw, Decimal(str(standard_price))))
     if module_category == "总部模块":
-        return round_money(Decimal(str(cost_price)) * Decimal("1.50"))
+        raw = Decimal(str(cost_price)) * Decimal("1.50")
+        return round_money(min(raw, Decimal(str(standard_price))))
     return round_money(cost_price)
 
 

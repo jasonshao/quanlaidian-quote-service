@@ -29,56 +29,76 @@
    pip install -e .
    ```
 
-4. Migrate pricing baseline:
-   ```bash
-   python ops/migrate_baseline.py \
-     --in /path/to/pricing_baseline_v5.obf \
-     --out data/pricing_baseline.json \
-     --key "$PRICING_BASELINE_KEY"
-   ```
-
-5. Configure environment:
+4. Configure environment:
    ```bash
    cp .env.example .env
-   # Edit .env with production values
+   # Required: PRICING_BASELINE_KEY (decrypts references/pricing_baseline_v5.obf at runtime)
+   # Recommended for prod: PRICING_BASELINE_STRICT=1 (refuses plaintext fallback)
+   # Optional overrides: QUOTE_API_BASE_URL, QUOTE_DATA_ROOT, etc.
    ```
 
-6. Create initial API token:
+   The obfuscated baseline is shipped committed at
+   `references/pricing_baseline_v5.obf` — no migration step needed for normal
+   deploys. If you prefer plaintext (not recommended), run
+   `python ops/migrate_baseline.py --in references/pricing_baseline_v5.obf --out data/pricing_baseline.json --key "$PRICING_BASELINE_KEY"`
+   and leave `PRICING_BASELINE_STRICT` unset.
+
+5. Create initial API token:
    ```bash
    source .venv/bin/activate
    python -m app.cli add-token --org <org-name>
    # Save the printed token — it's shown only once
    ```
 
-7. Install systemd service:
+6. Install systemd service:
    ```bash
    sudo cp ops/systemd/quanlaidian-quote.service /etc/systemd/system/
    sudo systemctl daemon-reload
    sudo systemctl enable --now quanlaidian-quote
    ```
 
-8. Configure nginx:
+7. Configure nginx:
    ```bash
    sudo cp ops/nginx.conf.example /etc/nginx/sites-available/quanlaidian-quote
    sudo ln -s /etc/nginx/sites-available/quanlaidian-quote /etc/nginx/sites-enabled/
    sudo nginx -t && sudo systemctl reload nginx
    ```
 
-9. Set up TLS:
+8. Set up TLS:
    ```bash
    sudo certbot --nginx -d api.quanlaidian.com
    ```
 
-10. Set up file cleanup cron:
-    ```bash
-    sudo crontab -e
-    # Add: 0 3 * * * /opt/quanlaidian-quote/ops/cron/cleanup-files.sh
-    ```
+9. Set up file cleanup cron:
+   ```bash
+   sudo crontab -e
+   # Add: 0 3 * * * /opt/quanlaidian-quote/ops/cron/cleanup-files.sh
+   ```
 
-11. Verify:
+10. Verify:
     ```bash
     curl https://api.quanlaidian.com/healthz
     ```
+
+## Rotating the pricing baseline
+
+When wholesale costs change:
+
+```bash
+# 1. Regenerate plaintext JSON from the source xlsx
+python ops/extract_baseline_from_xlsx.py \
+  --xlsx /path/to/全来店底价单V5.xlsx \
+  --output /tmp/pricing_baseline.json
+
+# 2. Re-obfuscate with the same key
+python ops/obfuscate_baseline.py \
+  --input /tmp/pricing_baseline.json \
+  --output references/pricing_baseline_v5.obf \
+  --key "$PRICING_BASELINE_KEY"
+
+# 3. Commit the updated .obf and redeploy
+rm /tmp/pricing_baseline.json
+```
 
 ## Adding New Tokens
 
