@@ -1,10 +1,16 @@
-# Quanlaidian Quote Service
+# 全来店报价服务
+
+> [English version →](README.en.md)
+
+全来店产品线的服务端报价系统：独占定价算法、价格基线、PDF/XLSX 渲染、文件存储和审计日志，把客户端缩成一段 HTTP 包装。
+
+**版本：** 1.0.0　**运行环境：** Python 3.10+ · FastAPI · uvicorn
 
 ---
 
-## Part 1 — Agent Usage Guide
+## 第一部分 — Agent 调用指南
 
-> This section is written for AI agents (such as OpenClaw) that call the quotation service. It covers authentication, the API endpoint, request/response schema, and error handling.
+> 这一节写给调用本服务的 AI Agent（如 OpenClaw）。涵盖鉴权、API 端点、请求/响应结构和错误处理。
 
 ### Base URL
 
@@ -12,50 +18,50 @@
 https://api.quanlaidian.com
 ```
 
-### Authentication
+### 鉴权
 
-All requests must include a Bearer token in the `Authorization` header:
+所有请求必须在 `Authorization` 头中携带 Bearer token：
 
 ```
 Authorization: Bearer <token>
 ```
 
-Tokens are issued per organisation by the server administrator (see `python -m app.cli add-token`). A missing or incorrect token returns `HTTP 401`.
+Token 由服务端管理员按组织发放（`python -m app.cli add-token`）。缺失或错误返回 `HTTP 401`。
 
 ---
 
 ### POST /v1/quote
 
-Generate a quotation. Returns a JSON preview and time-limited download URLs for the PDF, XLSX, and JSON config files.
+生成一份报价单。返回 JSON 摘要 + PDF / XLSX / JSON 配置三份文件的限时下载 URL。
 
-#### Request
+#### 请求
 
-**Headers:**
+**请求头：**
 
-| Header | Value |
+| Header | 值 |
 |---|---|
 | `Content-Type` | `application/json` |
 | `Authorization` | `Bearer <token>` |
 
-**Body — all fields (JSON):**
+**请求体（JSON）—— 全部字段：**
 
-| Field | Type | Required | Constraint | Description |
+| 字段 | 类型 | 必填 | 约束 | 说明 |
 |---|---|---|---|---|
-| `客户品牌名称` | string | ✅ | — | Customer brand name |
-| `餐饮类型` | string | ✅ | `"轻餐"` or `"正餐"` | Dining category |
-| `门店数量` | integer | ✅ | 1 – 30 | Number of stores |
-| `门店套餐` | string | ✅ | — | Store package name — must match a name in [`references/product_catalog.md`](references/product_catalog.md), e.g. `"轻餐连锁营销旗舰版"` or `"正餐连锁营销旗舰版"` |
-| `门店增值模块` | string[] | ❌ | — | Optional add-on modules per store |
-| `总部模块` | string[] | ❌ | — | Optional HQ-level modules |
-| `配送中心数量` | integer | ❌ | ≥ 0, default 0 | Number of distribution centres |
-| `生产加工中心数量` | integer | ❌ | ≥ 0, default 0 | Number of production/processing centres |
-| `成交价系数` | float | ❌ | 0.01 – 1.0 | Explicit deal-price coefficient (overrides computed discount). **If set, `人工改价原因` is required** — otherwise the request returns `400 OUT_OF_RANGE`. |
-| `人工改价原因` | string | ❌ | non-empty | Required when `成交价系数` is provided (audit trail for manual override) |
-| `是否启用阶梯报价` | boolean | ❌ | default `false` | Enable tiered pricing |
-| `实施服务类型` | string | ❌ | — | Implementation service type |
-| `实施服务人天` | integer | ❌ | ≥ 0, default 0 | Implementation service person-days |
+| `客户品牌名称` | string | ✅ | — | 客户品牌名称 |
+| `餐饮类型` | string | ✅ | `"轻餐"` 或 `"正餐"` | 餐饮类型 |
+| `门店数量` | integer | ✅ | 1 – 30 | 门店数量 |
+| `门店套餐` | string | ✅ | — | 套餐名，必须与 [`references/product_catalog.md`](references/product_catalog.md) 一致，如 `"轻餐连锁营销旗舰版"` / `"正餐连锁营销旗舰版"` |
+| `门店增值模块` | string[] | ❌ | — | 可选门店增值模块 |
+| `总部模块` | string[] | ❌ | — | 可选总部模块 |
+| `配送中心数量` | integer | ❌ | ≥ 0，默认 0 | 配送中心数量 |
+| `生产加工中心数量` | integer | ❌ | ≥ 0，默认 0 | 生产加工中心数量 |
+| `成交价系数` | float | ❌ | 0.01 – 1.0 | 显式成交价系数（覆盖自动推荐折扣）。**显式提供时 `人工改价原因` 必填**，否则返回 `400 OUT_OF_RANGE` |
+| `人工改价原因` | string | ❌ | 非空 | 显式提供 `成交价系数` 时必填，用于审计留痕 |
+| `是否启用阶梯报价` | boolean | ❌ | 默认 `false` | 启用阶梯报价 |
+| `实施服务类型` | string | ❌ | — | 实施服务类型 |
+| `实施服务人天` | integer | ❌ | ≥ 0，默认 0 | 实施服务人天 |
 
-**Minimal example:**
+**最小示例：**
 
 ```json
 {
@@ -66,7 +72,7 @@ Generate a quotation. Returns a JSON preview and time-limited download URLs for 
 }
 ```
 
-**Full example:**
+**完整示例：**
 
 ```json
 {
@@ -86,7 +92,7 @@ Generate a quotation. Returns a JSON preview and time-limited download URLs for 
 }
 ```
 
-#### Response — HTTP 200
+#### 响应 — HTTP 200
 
 ```json
 {
@@ -131,44 +137,44 @@ Generate a quotation. Returns a JSON preview and time-limited download URLs for 
 }
 ```
 
-**Field notes:**
-- `prices` are integers in 元 (CNY), e.g. `408000` = ¥408,000.
-- `discount` is the final deal-price coefficient, e.g. `0.85` = 85%.
-- File URLs are valid for **7 days**. Download them promptly and deliver to the customer.
-- `pricing_version` identifies the baseline data version used; include it in customer communications for audit traceability.
+**字段说明：**
+- `prices` 是以元（CNY）为单位的整数，例如 `408000` = ¥408,000。
+- `discount` 是最终成交价系数，例如 `0.85` = 85%。
+- 文件 URL **有效期 7 天**，请尽快下载并交付给客户。
+- `pricing_version` 标识使用的基线数据版本，请在客户沟通中保留以供审计追溯。
 
-#### Error Responses
+#### 错误响应
 
-All errors share the same envelope:
+所有错误共用一个信封：
 
 ```json
 {
   "error": {
     "code": "<ERROR_CODE>",
-    "message": "Human-readable description",
-    "field": "<field_name_if_applicable>",
-    "hint": "<optional_hint>",
+    "message": "可读的错误描述",
+    "field": "<相关字段名>",
+    "hint": "<可选提示>",
     "request_id": "req_20260419143022_a1b2c3d4"
   }
 }
 ```
 
-| HTTP | `code` | Cause |
+| HTTP | `code` | 触发原因 |
 |---|---|---|
-| 401 | — | Missing or invalid Bearer token |
-| 422 | `INVALID_FORM` | Request body fails schema validation (e.g. missing required field, value out of range) |
-| 400 | `OUT_OF_RANGE` | Business-logic range violation (e.g. 门店数量 > 30) |
-| 500 | `PRICING_FAILED` | Pricing algorithm error (e.g. missing baseline or product catalog) |
-| 500 | `RENDER_FAILED` | PDF or XLSX generation error |
-| 500 | `INTERNAL_ERROR` | Unexpected server error |
+| 401 | — | 缺失或错误的 Bearer token |
+| 422 | `INVALID_FORM` | 请求体不符合 schema（缺必填字段、值越界等） |
+| 400 | `OUT_OF_RANGE` | 业务规则越界（如门店数量 > 30、缺人工改价原因等） |
+| 500 | `PRICING_FAILED` | 定价算法错误（如基线或产品目录缺失） |
+| 500 | `RENDER_FAILED` | PDF 或 XLSX 生成错误 |
+| 500 | `INTERNAL_ERROR` | 未预期的服务端错误 |
 
 ---
 
 ### GET /healthz
 
-Health check — no authentication required.
+健康检查 — 无需鉴权。
 
-**Response:**
+**响应：**
 ```json
 {
   "status": "ok",
@@ -180,13 +186,13 @@ Health check — no authentication required.
 
 ### GET /files/{token}/{filename}
 
-Download a generated file by its token-scoped URL. In production nginx serves this path directly from disk (`alias data/files/`). This route is a dev-mode fallback only.
+按 token 限定的 URL 下载已生成的文件。生产环境由 nginx 直接从磁盘提供（`alias data/files/`），此路由仅作为开发环境兜底。
 
 ---
 
-### Thin Client (OpenClaw Skill)
+### 薄客户端（OpenClaw 技能）
 
-The companion skill `quanlaidian-quotation-skill` provides a ready-made thin client (`scripts/quote.py`, 45 lines, zero extra dependencies). Configure two environment variables and invoke:
+配套技能仓库 [`quanlaidian-quote-skills`](https://github.com/jasonshao/quanlaidian-quote-skills) 提供现成的薄客户端（`scripts/quote.py`，45 行，零额外依赖）。配置两个环境变量即可调用：
 
 ```bash
 export QUOTE_API_TOKEN=<your_token>
@@ -194,164 +200,164 @@ export QUOTE_API_URL=https://api.quanlaidian.com
 python3 scripts/quote.py --form form_submission.json
 ```
 
-The script prints the JSON response and the three download URLs.
+脚本会打印 JSON 响应和三个下载 URL。
 
 ---
 
-## Part 2 — Project Description & Architecture
+## 第二部分 — 项目说明与架构
 
-### Background
+### 背景
 
-The original quotation system was a "fat skill" distributed to every user's OpenClaw node: 155 KB of Python, encrypted pricing data, a decryption key, and Feishu credentials — all on every user machine. This caused:
+旧版报价系统是分发到每台用户 OpenClaw 节点的"胖技能"：155 KB Python + 加密价格数据 + 解密 key + 飞书凭据，全部在每台用户机器上。带来的问题：
 
-- Feishu API calls failing randomly on user nodes
-- Pricing algorithm breakage after auto-updates (dependency / baseline / algorithm version drift)
-- Security exposure: pricing keys and credentials on every client machine
+- 飞书 API 在用户节点偶发失败
+- 自动升级后定价算法被破坏（依赖 / 基线 / 算法版本漂移）
+- 安全暴露：定价 key 和凭据散落在所有客户端
 
-This service is the server-side half of the refactoring. It owns all sensitive logic: the pricing algorithm, the pricing baseline, PDF/XLSX generation, file storage, and audit logging. Clients become a 45-line HTTP wrapper.
+本服务是该重构的服务端那一半。所有敏感逻辑收归服务端：定价算法、价格基线、PDF/XLSX 生成、文件存储、审计日志。客户端缩成 45 行 HTTP 包装。
 
 ---
 
-### Repository Layout
+### 仓库结构
 
 ```
 quanlaidian-quote-service/
-├── pyproject.toml              # Project metadata and dependencies
-├── .env.example                # Environment variable template
+├── pyproject.toml              # 项目元数据与依赖
+├── .env.example                # 环境变量模板
 ├── .gitignore
 ├── app/
-│   ├── main.py                 # FastAPI app assembly + middleware
-│   ├── config.py               # Pydantic Settings (env prefix: QUOTE_)
-│   ├── auth.py                 # Bearer token verification (sha256 + hmac)
-│   ├── audit.py                # Append-only JSONL audit logger
-│   ├── errors.py               # Unified exception classes + handlers
-│   ├── storage.py              # Storage protocol + LocalDiskStorage
-│   ├── cli.py                  # Token management CLI
+│   ├── main.py                 # FastAPI 入口装配 + 中间件
+│   ├── config.py               # Pydantic Settings（前缀 QUOTE_）
+│   ├── auth.py                 # Bearer token 校验（sha256 + hmac）
+│   ├── audit.py                # 追加式 JSONL 审计日志
+│   ├── errors.py               # 统一异常类 + 处理器
+│   ├── storage.py              # 存储 Protocol + LocalDiskStorage
+│   ├── cli.py                  # Token 管理 CLI
 │   ├── api/
-│   │   ├── quote.py            # POST /v1/quote route handler
-│   │   ├── files.py            # GET /files/{token}/{filename} (dev fallback)
+│   │   ├── quote.py            # POST /v1/quote 路由
+│   │   ├── files.py            # GET /files/{token}/{filename}（开发兜底）
 │   │   └── health.py           # GET /healthz
 │   └── domain/
-│       ├── schema.py           # Pydantic request/response models
-│       ├── pricing.py          # Pricing algorithm (ported from build_quotation_config.py)
-│       ├── pricing_baseline.py # Load plaintext pricing_baseline.json
-│       ├── render_pdf.py       # PDF generation (reportlab, ported from generate_quotation.py)
-│       └── render_xlsx.py      # XLSX generation (openpyxl, ported from generate_quotation.py)
+│       ├── schema.py           # Pydantic 请求/响应模型
+│       ├── pricing.py          # 定价算法（移植自 build_quotation_config.py）
+│       ├── pricing_baseline.py # 加载明文 pricing_baseline.json
+│       ├── render_pdf.py       # PDF 生成（reportlab，移植自 generate_quotation.py）
+│       └── render_xlsx.py      # XLSX 生成（openpyxl，移植自 generate_quotation.py）
 ├── data/
-│   ├── pricing_baseline.json   # Pricing data — NOT in VCS, deploy manually
-│   ├── tokens.json             # SHA-256 hashed token store
-│   ├── fonts/                  # CJK fonts for reportlab (NOT in VCS)
-│   ├── files/                  # Generated output files (7-day TTL, NOT in VCS)
-│   └── audit/                  # YYYY-MM-DD.jsonl audit logs (NOT in VCS)
+│   ├── pricing_baseline.json   # 价格基线数据 — 不入版本控制，手工部署
+│   ├── tokens.json             # SHA-256 哈希后的 token 仓库
+│   ├── fonts/                  # reportlab 用的 CJK 字体（不入 VCS）
+│   ├── files/                  # 生成的输出文件（7 天 TTL，不入 VCS）
+│   └── audit/                  # YYYY-MM-DD.jsonl 审计日志（不入 VCS）
 ├── references/
-│   └── product_catalog.md      # Product catalogue (read by pricing algorithm)
+│   └── product_catalog.md      # 产品目录（定价算法读取）
 ├── tests/
-│   ├── conftest.py             # Test fixtures (TestClient, temp data_root, test tokens)
-│   ├── fixtures/               # Example form JSON inputs
+│   ├── conftest.py             # 测试 fixture（TestClient、临时 data_root、测试 token）
+│   ├── fixtures/               # 表单 JSON 示例
 │   ├── test_schema.py
 │   ├── test_storage.py
 │   ├── test_auth.py
 │   ├── test_errors.py
 │   ├── test_pricing.py
 │   ├── test_render.py
-│   └── test_api.py             # 44 integration tests — all passing
+│   └── test_api.py             # 46 个集成测试 — 全部通过
 └── ops/
-    ├── nginx.conf.example      # Reverse proxy config (TLS, file serving)
+    ├── nginx.conf.example      # 反向代理配置（TLS、文件服务）
     ├── systemd/
     │   └── quanlaidian-quote.service
     ├── cron/
-    │   └── cleanup-files.sh    # Delete files older than 7 days
-    ├── migrate_baseline.py     # Decrypt .obf baseline → plaintext JSON
-    └── runbook.md              # Deployment and operations guide
+    │   └── cleanup-files.sh    # 删除 7 天前的旧文件
+    ├── migrate_baseline.py     # 解密 .obf 基线 → 明文 JSON
+    └── runbook.md              # 部署与运维手册
 ```
 
 ---
 
-### Module Responsibilities
+### 模块职责
 
 #### `app/config.py` — Settings
 
-Pydantic `BaseSettings` reads all configuration from environment variables with the `QUOTE_` prefix:
+Pydantic `BaseSettings` 从环境变量读取所有配置，前缀 `QUOTE_`，并加载 `.env` 文件：
 
-| Variable | Default | Description |
+| 变量 | 默认值 | 说明 |
 |---|---|---|
-| `QUOTE_API_BASE_URL` | `https://api.quanlaidian.com` | Public base URL (used to build file download URLs) |
-| `QUOTE_DATA_ROOT` | `data` | Root directory for files, tokens, audit logs |
-| `QUOTE_FILE_TTL_DAYS` | `7` | Days before generated files are eligible for cleanup |
-| `QUOTE_LOG_LEVEL` | `INFO` | Logging verbosity |
+| `QUOTE_API_BASE_URL` | `https://api.quanlaidian.com` | 公开 base URL（用于拼装文件下载 URL）|
+| `QUOTE_DATA_ROOT` | `data` | 文件、token、审计的根目录 |
+| `QUOTE_FILE_TTL_DAYS` | `7` | 生成文件的清理过期天数 |
+| `QUOTE_LOG_LEVEL` | `INFO` | 日志级别 |
 
-#### `app/auth.py` + `app/cli.py` — Token Management
+#### `app/auth.py` + `app/cli.py` — Token 管理
 
-Tokens are never stored in plaintext. The CLI generates a `secrets.token_urlsafe(32)` value, stores its `sha256` hex digest in `data/tokens.json`, and prints the plaintext token once:
+Token 永不以明文存储。CLI 生成一个 `secrets.token_urlsafe(32)`，把它的 `sha256` hex 摘要存入 `data/tokens.json`，明文只打印一次：
 
 ```bash
 python -m app.cli add-token --org "acme-sales"
-# → Token for acme-sales: qlq_Xr9...  (shown once, store it safely)
+# → Token for acme-sales: qlq_Xr9...  （仅显示一次，请妥善保存）
 ```
 
-On each request, `auth.py` hashes the presented bearer token and uses `hmac.compare_digest` for timing-safe comparison against all stored hashes. No raw tokens ever touch disk.
+每次请求 `auth.py` 对 Bearer token 取 hash，用 `hmac.compare_digest` 做时序安全的对比。原始 token 不会落盘。
 
-#### `app/errors.py` — Unified Error Model
+#### `app/errors.py` — 统一错误模型
 
-Three custom exception classes (`OutOfRangeError`, `PricingError`, `RenderError`) map cleanly to structured JSON responses via FastAPI exception handlers. Every error response carries `request_id`, `code`, `message`, and optionally `field` and `hint`. The catch-all handler ensures no Python tracebacks leak to clients.
+三个自定义异常类（`OutOfRangeError`、`PricingError`、`RenderError`）通过 FastAPI 异常处理器映射为结构化 JSON。每个错误响应都带 `request_id`、`code`、`message`，可选 `field` 和 `hint`。catch-all 处理器保证不会泄漏 Python traceback 给客户端。
 
-#### `app/storage.py` — File Storage
+#### `app/storage.py` — 文件存储
 
-`LocalDiskStorage` saves each output file under a random 32-byte URL-safe token subdirectory:
+`LocalDiskStorage` 把每个输出文件保存到一个随机 32 字节 URL-safe token 子目录下：
 
 ```
 data/files/<token>/<filename>
 ```
 
-The public URL is `{api_base_url}/files/<token>/<filename>`. nginx serves this path directly in production (`alias`), bypassing FastAPI for file I/O. The `expires_at` timestamp is `now + file_ttl_days`; actual deletion is handled by the cron job.
+公开 URL 是 `{api_base_url}/files/<token>/<filename>`。生产环境 nginx 通过 `alias` 直接服务这个路径，绕开 FastAPI 的文件 IO。`expires_at` 时间戳是 `now + file_ttl_days`，实际删除由 cron 任务负责。
 
-#### `app/audit.py` — Audit Logging
+#### `app/audit.py` — 审计日志
 
-Each successful quote request appends one JSON line to `data/audit/YYYY-MM-DD.jsonl`. Fields: `ts`, `request_id`, `org`, `brand`, `stores`, `package`, `discount`, `final`, `pricing_version`, `status`, `duration_ms`. The file is rotated daily by the filename date; no log rotation daemon needed.
+每条成功的报价请求向 `data/audit/YYYY-MM-DD.jsonl` 追加一行 JSON。字段：`ts`、`request_id`、`org`、`brand`、`stores`、`package`、`discount`、`final`、`pricing_version`、`status`、`duration_ms`。文件名按日期天然轮转，无需 logrotate。
 
-#### `app/domain/schema.py` — Pydantic Models
+#### `app/domain/schema.py` — Pydantic 模型
 
-Request: `QuoteForm` — 12 fields, with validators: `门店数量` ∈ [1, 30], `成交价系数` ∈ [0.01, 1.0].
+请求：`QuoteForm` — 13 字段，含校验：`门店数量 ∈ [1, 30]`、`成交价系数 ∈ [0.01, 1.0]`、`成交价系数` 显式提供时跨字段要求 `人工改价原因`。
 
-Response: `QuoteResponse` → `preview: QuotePreview` + `files: dict[str, FileRef]` + `pricing_version`.
+响应：`QuoteResponse` → `preview: QuotePreview` + `files: dict[str, FileRef]` + `pricing_version`。
 
-Error: `ErrorResponse` → `error: ErrorDetail`.
+错误：`ErrorResponse` → `error: ErrorDetail`。
 
-#### `app/domain/pricing.py` — Pricing Algorithm
+#### `app/domain/pricing.py` — 定价算法
 
-Ported line-for-line from the legacy `build_quotation_config.py` (963 lines). The only changes: Pydantic model field access instead of dict subscript, plaintext JSON baseline instead of obfuscated `.obf` files, and `PricingError` / `OutOfRangeError` raised on business-logic failures.
+从遗留 `build_quotation_config.py`（963 行）逐行移植。改动只有：用 Pydantic 模型字段访问代替 dict 下标，用明文 JSON 基线代替混淆的 `.obf` 文件，业务规则失败抛 `PricingError` / `OutOfRangeError`。
 
-Entry point: `build_quotation_config(form_dict, baseline, product_catalog_path) → dict`
+入口：`build_quotation_config(form_dict, baseline, product_catalog_path) → dict`
 
-The returned `dict` is the full quotation configuration — the same structure consumed by the PDF and XLSX renderers, and saved as the `.json` download.
+返回的 `dict` 是完整的报价配置 — 同一份结构既给 PDF 和 XLSX 渲染器消费，也作为 `.json` 下载保存。
 
-#### `app/domain/render_pdf.py` + `app/domain/render_xlsx.py` — File Rendering
+#### `app/domain/render_pdf.py` + `app/domain/render_xlsx.py` — 文件渲染
 
-Both modules are ported from the legacy `generate_quotation.py` (1,735 lines), split by output format. Entry points:
+两个模块都从遗留 `generate_quotation.py`（1,735 行）按输出格式拆分。入口：
 
-- `render_pdf(config: dict, fonts_dir: Path) → bytes` — uses reportlab; returns raw PDF bytes
-- `render_xlsx(config: dict) → bytes` — uses openpyxl; returns XLSX bytes via `io.BytesIO`
+- `render_pdf(config: dict, fonts_dir: Path) → bytes` — 用 reportlab，返回 PDF 字节流
+- `render_xlsx(config: dict) → bytes` — 用 openpyxl，通过 `io.BytesIO` 返回 XLSX 字节流
 
-Font registration for CJK characters is handled inside `render_pdf`. Fonts are loaded from `data/fonts/` (not in VCS; deploy separately).
+CJK 字符所需的字体在 `render_pdf` 内部注册。字体从 `data/fonts/` 加载（不入 VCS，需单独部署）。
 
-#### `app/api/quote.py` — Route Handler
+#### `app/api/quote.py` — 路由处理
 
-The `POST /v1/quote` handler orchestrates the full pipeline in one request:
+`POST /v1/quote` 在一次请求中编排完整流水线：
 
-1. Parse and validate `QuoteForm` (Pydantic, auto-raises `INVALID_FORM` on failure)
-2. Authenticate caller via `Depends(verify_token(...))`
-3. Generate `request_id`
-4. Load pricing baseline and product catalog from disk
-5. Run `build_quotation_config` → config dict
-6. Render PDF and XLSX
-7. Save all three files (PDF, XLSX, JSON) via `LocalDiskStorage`
-8. Build `QuotePreview` from config
-9. Write audit log
-10. Return `QuoteResponse`
+1. 解析并校验 `QuoteForm`（Pydantic，失败自动抛 `INVALID_FORM`）
+2. 通过 `Depends(verify_token(...))` 鉴权
+3. 生成 `request_id`
+4. 从磁盘加载定价基线和产品目录
+5. 跑 `build_quotation_config` → config dict
+6. 渲染 PDF 和 XLSX
+7. 通过 `LocalDiskStorage` 保存全部三份文件（PDF / XLSX / JSON）
+8. 从 config 构建 `QuotePreview`
+9. 写审计日志
+10. 返回 `QuoteResponse`
 
 ---
 
-### Request Flow Diagram
+### 请求流水线
 
 ```
 OpenClaw agent
@@ -360,63 +366,63 @@ OpenClaw agent
     │  Authorization: Bearer <token>
     │  {QuoteForm JSON}
     ▼
-nginx (TLS termination)
+nginx (TLS 终结)
     │
     ▼
 FastAPI app (uvicorn, 127.0.0.1:8000)
     │
-    ├─ auth.py: verify Bearer token (sha256 + hmac)
-    ├─ schema.py: validate QuoteForm
-    ├─ pricing.py: build quotation config (baseline + product_catalog)
-    ├─ render_pdf.py: generate PDF bytes
-    ├─ render_xlsx.py: generate XLSX bytes
-    ├─ storage.py: save PDF + XLSX + JSON to data/files/<token>/
-    ├─ audit.py: append to data/audit/YYYY-MM-DD.jsonl
-    └─ return QuoteResponse (preview + 3 file URLs)
+    ├─ auth.py: 校验 Bearer token (sha256 + hmac)
+    ├─ schema.py: 校验 QuoteForm
+    ├─ pricing.py: 构建报价配置 (baseline + product_catalog)
+    ├─ render_pdf.py: 生成 PDF 字节流
+    ├─ render_xlsx.py: 生成 XLSX 字节流
+    ├─ storage.py: 把 PDF + XLSX + JSON 存到 data/files/<token>/
+    ├─ audit.py: 追加到 data/audit/YYYY-MM-DD.jsonl
+    └─ 返回 QuoteResponse (preview + 3 个文件 URL)
 
     │ GET /files/<token>/<filename>
     ▼
-nginx (serves data/files/ directly, 7-day expiry header)
+nginx (直接服务 data/files/，7 天过期头)
 ```
 
 ---
 
-### Ops Stack
+### 运维栈
 
-| Component | Tool |
+| 组件 | 工具 |
 |---|---|
-| WSGI server | uvicorn (2 workers) |
-| Reverse proxy | nginx (TLS via certbot, file serving via `alias`) |
-| Process manager | systemd (`ops/systemd/quanlaidian-quote.service`) |
-| File cleanup | cron (`ops/cron/cleanup-files.sh`, `find -mtime +7`) |
-| Baseline migration | `ops/migrate_baseline.py` (decrypt `.obf` → plaintext JSON) |
+| WSGI 服务器 | uvicorn (2 workers) |
+| 反向代理 | nginx（TLS 用 certbot，文件服务用 `alias`）|
+| 进程管理 | systemd（`ops/systemd/quanlaidian-quote.service`）|
+| 文件清理 | cron（`ops/cron/cleanup-files.sh`，`find -mtime +7`）|
+| 基线迁移 | `ops/migrate_baseline.py`（解密 `.obf` → 明文 JSON）|
 
-See `ops/runbook.md` for step-by-step first-time deployment, token provisioning, log access, and rollback procedures.
+详细的首次部署、token 发放、日志查看、回滚流程见 [`ops/runbook.md`](ops/runbook.md)。
 
 ---
 
-### Development Setup
+### 开发环境
 
 ```bash
 git clone <repo>
 cd quanlaidian-quote-service
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-cp .env.example .env          # edit as needed
-cp data/pricing_baseline.example.json data/pricing_baseline.json  # populate real data
+cp .env.example .env          # 按需修改
+cp data/pricing_baseline.example.json data/pricing_baseline.json  # 填入真实数据
 uvicorn app.main:app --reload
 ```
 
-Run tests:
+跑测试：
 
 ```bash
 pytest tests/ -v
-# 44 tests, all green
+# 46 个测试全部通过
 ```
 
-Issue a development token:
+发放开发 token：
 
 ```bash
 python -m app.cli add-token --org dev
-# prints plaintext token — use in QUOTE_API_TOKEN env var on the client
+# 打印明文 token — 用作客户端的 QUOTE_API_TOKEN 环境变量
 ```
