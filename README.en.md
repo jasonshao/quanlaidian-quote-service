@@ -2,21 +2,23 @@
 
 > [中文版 →](README.md)
 
-Server-side quotation service for the Quanlaidian product line. Owns the pricing algorithm, baseline data, PDF/XLSX rendering, file storage, and audit logging — turning every client into a thin HTTP wrapper.
+Server-side quotation service for the Quanlaidian product line. Owns the pricing algorithm, baseline data, PDF/XLSX rendering, file storage, audit logging, and approval workflow — turning every client into a thin HTTP wrapper.
 
-**Version:** 1.0.0　**Runtime:** Python 3.10+ · FastAPI · uvicorn
+**Version:** 1.0.0　**Runtime:** Python 3.10+ · FastAPI · uvicorn · SQLite
 
 ---
 
 ## Part 1 — Agent Usage Guide
 
-> This section is written for AI agents (such as OpenClaw) that call the quotation service. It covers authentication, the API endpoint, request/response schema, and error handling.
+> This section is written for AI agents (such as OpenClaw) that call the quotation service. It covers authentication, API endpoints, request/response schema, and error handling.
 
 ### Base URL
 
 ```
 https://api.quanlaidian.com
 ```
+
+During UAT the service may be reachable via a direct IP (ask the ops contact for the current host). Clients should configure the URL via the `QUOTE_API_URL` environment variable rather than hardcoding it.
 
 ### Authentication
 
@@ -26,135 +28,222 @@ All requests must include a Bearer token in the `Authorization` header:
 Authorization: Bearer <token>
 ```
 
-Tokens are issued per organisation by the server administrator (see `python -m app.cli add-token`). A missing or incorrect token returns `HTTP 401`.
+Tokens are issued per organisation by the server administrator (`python -m app.cli add-token`). A missing or incorrect token returns `HTTP 401`. All quote resources are scoped by `org`; cross-organisation access returns `HTTP 404`.
+
+### Idempotency (Idempotency-Key)
+
+`POST /v1/quotes` accepts an optional `Idempotency-Key` request header. Same key + same form → same `quote_id` (retry-safe); same key + different form → `400 OUT_OF_RANGE` (client bug — key reused). Without an explicit key, the server dedups on `(org, canonical form hash)`, so repeat-submitting the same form from the same org is still idempotent.
+
+Responses echo `X-Quote-ID` and `Idempotency-Key` headers.
 
 ---
 
-### POST /v1/quote
+## Resource-Oriented Quote Endpoints (Recommended)
 
-Generate a quotation. Returns a JSON preview and time-limited download URLs for the PDF, XLSX, and JSON config files.
+### POST /v1/quotes — Price + Persist
 
-#### Request
+Runs the pricing algorithm and writes to the `quote` table. **No files are rendered.** Use this for previews, approval-first flows, or when the client wants to defer file generation.
 
-**Headers:**
+**Body:** see the [QuoteForm field table](#quoteform-fields) below.
 
-| Header | Value |
-|---|---|
-| `Content-Type` | `application/json` |
-| `Authorization` | `Bearer <token>` |
+**Response — HTTP 200:**
 
-**Body — all fields (JSON):**
+```json
+{
+  "request_id": "req_20260419165249_649f6de0",
+  "quote_id": "q_20260419165249_649f6de0",
+  "pricing_version": "small-segment-v2.3",
+  "preview": {
+    "brand": "海底捞火锅",
+    "meal_type": "正餐",
+    "stores": 30,
+    "package": "正餐连锁营销旗舰版",
+    "discount": 0.19,
+    "totals": { "list": 478920, "final": 115119 },
+    "items": [ /* … */ ]
+  },
+  "approval": {
+    "required": false,
+    "state": "not_required",
+    "reasons": [],
+    "decided_by": null,
+    "decision_reason": null,
+    "decided_at": null
+  }
+}
+```
+
+### GET /v1/quotes/{quote_id} — Read Persisted Quote
+
+Returns preview, approval state, and already-rendered files.
+
+```json
+{
+  "quote_id": "q_…",
+  "org": "acme-sales",
+  "preview": { /* same shape as above */ },
+  "approval": { /* same shape as above */ },
+  "renders": {
+    "pdf": { "url": "…", "filename": "…", "expires_at": "…" },
+    "xlsx": { "url": "…", "filename": "…", "expires_at": "…" }
+  },
+  "pricing_version": "small-segment-v2.3",
+  "created_at": "2026-04-19T16:52:49.996645+00:00"
+}
+```
+
+### POST /v1/quotes/{quote_id}/render/{format} — On-Demand Render
+
+`format ∈ {pdf, xlsx, json}`. First call generates the file; subsequent calls reuse the URL. Pass `?force=1` to force a fresh render. If `approval.state` is `pending` or `rejected`, returns `409 APPROVAL_PENDING`.
+
+**Response — HTTP 200:**
+
+```json
+{
+  "url": "https://api.quanlaidian.com/files/<file_token>/海底捞火锅-全来店-报价单-20260420.pdf",
+  "filename": "海底捞火锅-全来店-报价单-20260420.pdf",
+  "expires_at": "2026-04-26T16:53:08Z"
+}
+```
+
+### POST /v1/quotes/{quote_id}/explain — Cost/Profit Breakdown
+
+Internal-use endpoint — returns wholesale cost, profit, and margin per line item. **Do not expose directly to customers.**
+
+**Response — HTTP 200:**
+
+```json
+{
+  "quote_id": "q_…",
+  "items": [
+    {
+      "name": "正餐连锁营销旗舰版",
+      "category": "标准软件套餐",
+      "module_category": "门店软件套餐",
+      "list_price": 15120,
+      "unit_price": 2872.80,
+      "qty": 30,
+      "subtotal": 86184.00,
+      "cost_unit_price": 756.00,
+      "cost_subtotal": 22680.00,
+      "profit": 63504.00,
+      "margin_pct": 73.7,
+      "protected": false,
+      "factor": 0.19
+    }
+  ],
+  "totals": { "list": 478920, "final": 115119 },
+  "pricing_info": { /* full pricing metadata */ },
+  "internal_financials": { "quote_total": 115119, "cost_total": 29876, "profit_total": 85243, "profit_rate": 74.05 }
+}
+```
+
+### POST /v1/quotes/{quote_id}/approvals/decide — Approval Decision
+
+Required when `approval.required == true`.
+
+**Body:**
+
+```json
+{
+  "decision": "approve",
+  "reason": "VIP customer, CEO sign-off",
+  "approver": "Director Wang"
+}
+```
+
+`decision` must be `"approve"` or `"reject"`. After approval, render calls succeed. After rejection, render continues to return `409` (terminal).
+
+---
+
+## Other Endpoints
+
+### GET /v1/catalog
+
+Returns the parsed product catalog as JSON. Optional query: `meal_type=轻餐|正餐`.
+
+```json
+{
+  "pricing_version": "small-segment-v2.3",
+  "meal_type": "正餐",
+  "items": [
+    { "meal_type": "正餐", "group": "门店套餐", "name": "正餐连锁营销旗舰版", "unit": "店/年", "price": 15900 }
+  ]
+}
+```
+
+Skill clients should fetch this at startup rather than ship their own copy of `product_catalog.md` — prevents pricing drift between skill previews and server-side reality.
+
+### POST /v1/quote — Legacy Single-Shot (Kept for UAT Compatibility)
+
+One call: price + persist + PDF + XLSX + JSON render, returned as `QuoteResponse`.
+
+- Quotes that trigger approval (factor far from the recommended value, manual override without sufficient history samples, etc.) return `409 APPROVAL_PENDING`; clients must switch to the resource endpoints and go through `decide`.
+- `Idempotency-Key` still honored.
+
+```json
+{
+  "request_id": "req_…",
+  "pricing_version": "small-segment-v2.3",
+  "preview": { /* … */ },
+  "files": {
+    "pdf": { "url": "…", "filename": "…", "expires_at": "…" },
+    "xlsx": { "url": "…", "filename": "…", "expires_at": "…" },
+    "json": { "url": "…", "filename": "…", "expires_at": "…" }
+  }
+}
+```
+
+### GET /healthz
+
+Health check — no auth required.
+
+```json
+{ "status": "ok", "pricing_version": "small-segment-v2.3" }
+```
+
+### GET /files/{token}/{filename}
+
+Download a generated file by its token-scoped URL. In production nginx serves this path directly from disk (`alias data/files/`); this route is a dev-mode fallback.
+
+---
+
+## QuoteForm Fields
+
+Shared by `POST /v1/quotes` and the legacy `POST /v1/quote`:
 
 | Field | Type | Required | Constraint | Description |
 |---|---|---|---|---|
 | `客户品牌名称` | string | ✅ | — | Customer brand name |
 | `餐饮类型` | string | ✅ | `"轻餐"` or `"正餐"` | Dining category |
-| `门店数量` | integer | ✅ | 1 – 30 | Number of stores |
-| `门店套餐` | string | ✅ | — | Store package name — must match a name in [`references/product_catalog.md`](references/product_catalog.md), e.g. `"轻餐连锁营销旗舰版"` or `"正餐连锁营销旗舰版"` |
+| `门店数量` | integer | ✅ | 1 – 30 | Number of stores (31+ → 422, route through manual pricing) |
+| `门店套餐` | string | ✅ | — | Store package name — must match a name in [`references/product_catalog.md`](references/product_catalog.md) |
 | `门店增值模块` | string[] | ❌ | — | Optional add-on modules per store |
 | `总部模块` | string[] | ❌ | — | Optional HQ-level modules |
 | `配送中心数量` | integer | ❌ | ≥ 0, default 0 | Number of distribution centres |
 | `生产加工中心数量` | integer | ❌ | ≥ 0, default 0 | Number of production/processing centres |
-| `成交价系数` | float | ❌ | 0.01 – 1.0 | Explicit deal-price coefficient (overrides computed discount). **If set, `人工改价原因` is required** — otherwise the request returns `400 OUT_OF_RANGE`. |
-| `人工改价原因` | string | ❌ | non-empty | Required when `成交价系数` is provided (audit trail for manual override) |
+| `成交价系数` | float | ❌ | 0.01 – 1.0 | Explicit deal-price coefficient. **Requires `人工改价原因`** when set |
+| `人工改价原因` | string | ❌ | non-empty | Required when `成交价系数` is set (audit trail) |
 | `是否启用阶梯报价` | boolean | ❌ | default `false` | Enable tiered pricing |
 | `实施服务类型` | string | ❌ | — | Implementation service type |
 | `实施服务人天` | integer | ❌ | ≥ 0, default 0 | Implementation service person-days |
 
-**Minimal example:**
+---
 
-```json
-{
-  "客户品牌名称": "示例品牌",
-  "餐饮类型": "轻餐",
-  "门店数量": 5,
-  "门店套餐": "轻餐连锁营销旗舰版"
-}
-```
-
-**Full example:**
-
-```json
-{
-  "客户品牌名称": "示例品牌",
-  "餐饮类型": "正餐",
-  "门店数量": 10,
-  "门店套餐": "正餐连锁营销旗舰版",
-  "门店增值模块": ["厨房KDS"],
-  "总部模块": ["配送中心"],
-  "配送中心数量": 1,
-  "生产加工中心数量": 0,
-  "成交价系数": 0.85,
-  "人工改价原因": "总部战略客户，CEO 特批",
-  "是否启用阶梯报价": false,
-  "实施服务类型": "标准实施",
-  "实施服务人天": 5
-}
-```
-
-#### Response — HTTP 200
-
-```json
-{
-  "request_id": "req_20260419143022_a1b2c3d4",
-  "pricing_version": "small-segment-v2.3",
-  "preview": {
-    "brand": "示例品牌",
-    "meal_type": "正餐",
-    "stores": 10,
-    "package": "正餐连锁营销旗舰版",
-    "discount": 0.85,
-    "totals": {
-      "list": 480000,
-      "final": 408000
-    },
-    "items": [
-      {
-        "name": "正餐连锁营销旗舰版",
-        "qty": 10,
-        "list": 39800,
-        "final": 33830
-      }
-    ]
-  },
-  "files": {
-    "pdf": {
-      "url": "https://api.quanlaidian.com/files/<token>/示例品牌-全来店-报价单-20260419.pdf",
-      "filename": "示例品牌-全来店-报价单-20260419.pdf",
-      "expires_at": "2026-04-26T14:30:22Z"
-    },
-    "xlsx": {
-      "url": "https://api.quanlaidian.com/files/<token>/示例品牌-全来店-报价单-20260419.xlsx",
-      "filename": "示例品牌-全来店-报价单-20260419.xlsx",
-      "expires_at": "2026-04-26T14:30:22Z"
-    },
-    "json": {
-      "url": "https://api.quanlaidian.com/files/<token>/示例品牌-全来店-报价配置-20260419.json",
-      "filename": "示例品牌-全来店-报价配置-20260419.json",
-      "expires_at": "2026-04-26T14:30:22Z"
-    }
-  }
-}
-```
-
-**Field notes:**
-- `prices` are integers in 元 (CNY), e.g. `408000` = ¥408,000.
-- `discount` is the final deal-price coefficient, e.g. `0.85` = 85%.
-- File URLs are valid for **7 days**. Download them promptly and deliver to the customer.
-- `pricing_version` identifies the baseline data version used; include it in customer communications for audit traceability.
-
-#### Error Responses
+## Error Responses
 
 All errors share the same envelope:
 
 ```json
 {
   "error": {
-    "code": "<ERROR_CODE>",
-    "message": "Human-readable description",
-    "field": "<field_name_if_applicable>",
+    "code": "APPROVAL_PENDING",
+    "message": "quote q_… requires approval before it can be rendered",
+    "field": "<optional_field_name>",
     "hint": "<optional_hint>",
-    "request_id": "req_20260419143022_a1b2c3d4"
+    "request_id": "req_20260419165334_ac8dbe5f",
+    "quote_id": "q_…",                         // APPROVAL_PENDING only
+    "approval_reasons": [ "…" ]                 // APPROVAL_PENDING only
   }
 }
 ```
@@ -162,45 +251,24 @@ All errors share the same envelope:
 | HTTP | `code` | Cause |
 |---|---|---|
 | 401 | — | Missing or invalid Bearer token |
-| 422 | `INVALID_FORM` | Request body fails schema validation (e.g. missing required field, value out of range) |
-| 400 | `OUT_OF_RANGE` | Business-logic range violation (e.g. 门店数量 > 30) |
-| 500 | `PRICING_FAILED` | Pricing algorithm error (e.g. missing baseline or product catalog) |
+| 404 | `NOT_FOUND` | Quote does not exist or does not belong to the caller's org |
+| 409 | `APPROVAL_PENDING` | Quote requires approval and is not currently `approved` |
+| 422 | `INVALID_FORM` | Request body fails schema validation |
+| 400 | `OUT_OF_RANGE` | Business-rule violation (missing manual-override reason, Idempotency-Key conflict, etc.) |
+| 500 | `PRICING_FAILED` | Pricing algorithm error (missing baseline or product catalog) |
 | 500 | `RENDER_FAILED` | PDF or XLSX generation error |
 | 500 | `INTERNAL_ERROR` | Unexpected server error |
 
 ---
 
-### GET /healthz
+## Thin Client (OpenClaw Skill)
 
-Health check — no authentication required.
-
-**Response:**
-```json
-{
-  "status": "ok",
-  "pricing_version": "small-segment-v2.3"
-}
-```
-
----
-
-### GET /files/{token}/{filename}
-
-Download a generated file by its token-scoped URL. In production nginx serves this path directly from disk (`alias data/files/`). This route is a dev-mode fallback only.
-
----
-
-### Thin Client (OpenClaw Skill)
-
-The companion skill `quanlaidian-quotation-skill` provides a ready-made thin client (`scripts/quote.py`, 45 lines, zero extra dependencies). Configure two environment variables and invoke:
+The companion skill repository [`quanlaidian-quote-skills`](https://github.com/jasonshao/quanlaidian-quote-skills) provides a thin client. Configure two environment variables:
 
 ```bash
 export QUOTE_API_TOKEN=<your_token>
 export QUOTE_API_URL=https://api.quanlaidian.com
-python3 scripts/quote.py --form form_submission.json
 ```
-
-The script prints the JSON response and the three download URLs.
 
 ---
 
@@ -214,7 +282,7 @@ The original quotation system was a "fat skill" distributed to every user's Open
 - Pricing algorithm breakage after auto-updates (dependency / baseline / algorithm version drift)
 - Security exposure: pricing keys and credentials on every client machine
 
-This service is the server-side half of the refactoring. It owns all sensitive logic: the pricing algorithm, the pricing baseline, PDF/XLSX generation, file storage, and audit logging. Clients become a 45-line HTTP wrapper.
+This service owns all sensitive logic server-side: the pricing algorithm, the pricing baseline (runtime XOR+SHA256 decoded — plaintext never touches disk), PDF/XLSX generation, file storage, SQLite persistence, audit logging, and approval workflow.
 
 ---
 
@@ -222,53 +290,64 @@ This service is the server-side half of the refactoring. It owns all sensitive l
 
 ```
 quanlaidian-quote-service/
-├── pyproject.toml              # Project metadata and dependencies
-├── .env.example                # Environment variable template
-├── .gitignore
+├── pyproject.toml
+├── .env.example                       # includes PRICING_BASELINE_KEY / STRICT
 ├── app/
-│   ├── main.py                 # FastAPI app assembly + middleware
-│   ├── config.py               # Pydantic Settings (env prefix: QUOTE_)
-│   ├── auth.py                 # Bearer token verification (sha256 + hmac)
-│   ├── audit.py                # Append-only JSONL audit logger
-│   ├── errors.py               # Unified exception classes + handlers
-│   ├── storage.py              # Storage protocol + LocalDiskStorage
-│   ├── cli.py                  # Token management CLI
+│   ├── main.py                        # FastAPI entry + lifespan SQLite init
+│   ├── config.py                      # Pydantic Settings (QUOTE_ prefix)
+│   ├── auth.py                        # Bearer token verification
+│   ├── audit.py                       # Append-only JSONL audit logger
+│   ├── errors.py                      # Unified exception classes + handlers
+│   ├── storage.py                     # LocalDiskStorage (returns file_token)
+│   ├── cli.py                         # Token management CLI
 │   ├── api/
-│   │   ├── quote.py            # POST /v1/quote route handler
-│   │   ├── files.py            # GET /files/{token}/{filename} (dev fallback)
-│   │   └── health.py           # GET /healthz
-│   └── domain/
-│       ├── schema.py           # Pydantic request/response models
-│       ├── pricing.py          # Pricing algorithm (ported from build_quotation_config.py)
-│       ├── pricing_baseline.py # Load plaintext pricing_baseline.json
-│       ├── render_pdf.py       # PDF generation (reportlab, ported from generate_quotation.py)
-│       └── render_xlsx.py      # XLSX generation (openpyxl, ported from generate_quotation.py)
-├── data/
-│   ├── pricing_baseline.json   # Pricing data — NOT in VCS, deploy manually
-│   ├── tokens.json             # SHA-256 hashed token store
-│   ├── fonts/                  # CJK fonts for reportlab (NOT in VCS)
-│   ├── files/                  # Generated output files (7-day TTL, NOT in VCS)
-│   └── audit/                  # YYYY-MM-DD.jsonl audit logs (NOT in VCS)
+│   │   ├── quote.py                   # POST /v1/quote (legacy)
+│   │   ├── quotes.py                  # /v1/quotes/* resource endpoints
+│   │   ├── catalog.py                 # GET /v1/catalog
+│   │   ├── files.py                   # GET /files/{token}/{filename}
+│   │   └── health.py                  # GET /healthz
+│   ├── domain/
+│   │   ├── schema.py                  # Pydantic request/response models
+│   │   ├── pricing.py                 # Pricing algorithm (small-segment-v2.3)
+│   │   ├── pricing_baseline.py        # .obf runtime decode + plaintext fallback
+│   │   ├── quote_service.py           # Price/render/approval business logic (shared)
+│   │   ├── render_pdf.py              # reportlab PDF
+│   │   └── render_xlsx.py             # openpyxl XLSX
+│   └── persistence/                   # SQLite persistence layer (Wave B0)
+│       ├── db.py                      # Connection + schema initialisation
+│       ├── models.py                  # Quote / QuoteRender / Approval dataclasses
+│       └── quote_repo.py              # CRUD + idempotency logic
+├── data/                              # Runtime state (NOT in VCS)
+│   ├── quote.db                       # SQLite: quote / quote_render / approval
+│   ├── pricing_baseline.json          # Plaintext baseline (optional; obf preferred)
+│   ├── tokens.json                    # SHA-256 hashed tokens
+│   ├── fonts/                         # CJK fonts for PDF rendering
+│   ├── files/                         # Generated files (7-day TTL)
+│   └── audit/                         # YYYY-MM-DD.jsonl audit logs
 ├── references/
-│   └── product_catalog.md      # Product catalogue (read by pricing algorithm)
-├── tests/
-│   ├── conftest.py             # Test fixtures (TestClient, temp data_root, test tokens)
-│   ├── fixtures/               # Example form JSON inputs
+│   ├── product_catalog.md             # Product catalog (customer-facing list prices)
+│   └── pricing_baseline_v5.obf        # Obfuscated baseline (preferred in production)
+├── docs/
+│   └── pricing-algorithm.md           # Pricing algorithm reference
+├── tests/                             # 77 tests, all passing
+│   ├── conftest.py
+│   ├── fixtures/
+│   ├── test_api.py                    # Endpoint integration tests (incl. new resources)
+│   ├── test_persistence.py            # SQLite layer unit tests
+│   ├── test_pricing.py
+│   ├── test_render.py
 │   ├── test_schema.py
 │   ├── test_storage.py
 │   ├── test_auth.py
-│   ├── test_errors.py
-│   ├── test_pricing.py
-│   ├── test_render.py
-│   └── test_api.py             # 44 integration tests — all passing
+│   └── test_errors.py
 └── ops/
-    ├── nginx.conf.example      # Reverse proxy config (TLS, file serving)
-    ├── systemd/
-    │   └── quanlaidian-quote.service
-    ├── cron/
-    │   └── cleanup-files.sh    # Delete files older than 7 days
-    ├── migrate_baseline.py     # Decrypt .obf baseline → plaintext JSON
-    └── runbook.md              # Deployment and operations guide
+    ├── nginx.conf.example
+    ├── systemd/quanlaidian-quote.service
+    ├── cron/cleanup-files.sh
+    ├── migrate_baseline.py            # .obf → plaintext JSON (emergency)
+    ├── obfuscate_baseline.py          # plaintext JSON → .obf (re-encrypt after pricing change)
+    ├── extract_baseline_from_xlsx.py  # Source-of-truth xlsx → plaintext JSON
+    └── runbook.md                     # Deployment and operations guide
 ```
 
 ---
@@ -277,112 +356,89 @@ quanlaidian-quote-service/
 
 #### `app/config.py` — Settings
 
-Pydantic `BaseSettings` reads all configuration from environment variables with the `QUOTE_` prefix:
+Pydantic `BaseSettings` reads all configuration from environment variables:
 
 | Variable | Default | Description |
 |---|---|---|
-| `QUOTE_API_BASE_URL` | `https://api.quanlaidian.com` | Public base URL (used to build file download URLs) |
-| `QUOTE_DATA_ROOT` | `data` | Root directory for files, tokens, audit logs |
+| `QUOTE_API_BASE_URL` | `https://api.quanlaidian.com` | Public base URL |
+| `QUOTE_DATA_ROOT` | `data` | Root directory for files, tokens, DB, audit |
 | `QUOTE_FILE_TTL_DAYS` | `7` | Days before generated files are eligible for cleanup |
 | `QUOTE_LOG_LEVEL` | `INFO` | Logging verbosity |
+| `PRICING_BASELINE_KEY` | — | Decryption key for the `.obf` baseline (required in prod) |
+| `PRICING_BASELINE_STRICT` | `0` | Set to `1` to refuse plaintext fallback (recommended in prod) |
 
-#### `app/auth.py` + `app/cli.py` — Token Management
+#### `app/domain/pricing_baseline.py` — Runtime Baseline Codec
 
-Tokens are never stored in plaintext. The CLI generates a `secrets.token_urlsafe(32)` value, stores its `sha256` hex digest in `data/tokens.json`, and prints the plaintext token once:
-
-```bash
-python -m app.cli add-token --org "acme-sales"
-# → Token for acme-sales: qlq_Xr9...  (shown once, store it safely)
-```
-
-On each request, `auth.py` hashes the presented bearer token and uses `hmac.compare_digest` for timing-safe comparison against all stored hashes. No raw tokens ever touch disk.
-
-#### `app/errors.py` — Unified Error Model
-
-Three custom exception classes (`OutOfRangeError`, `PricingError`, `RenderError`) map cleanly to structured JSON responses via FastAPI exception handlers. Every error response carries `request_id`, `code`, `message`, and optionally `field` and `hint`. The catch-all handler ensures no Python tracebacks leak to clients.
-
-#### `app/storage.py` — File Storage
-
-`LocalDiskStorage` saves each output file under a random 32-byte URL-safe token subdirectory:
-
-```
-data/files/<token>/<filename>
-```
-
-The public URL is `{api_base_url}/files/<token>/<filename>`. nginx serves this path directly in production (`alias`), bypassing FastAPI for file I/O. The `expires_at` timestamp is `now + file_ttl_days`; actual deletion is handled by the cron job.
-
-#### `app/audit.py` — Audit Logging
-
-Each successful quote request appends one JSON line to `data/audit/YYYY-MM-DD.jsonl`. Fields: `ts`, `request_id`, `org`, `brand`, `stores`, `package`, `discount`, `final`, `pricing_version`, `status`, `duration_ms`. The file is rotated daily by the filename date; no log rotation daemon needed.
-
-#### `app/domain/schema.py` — Pydantic Models
-
-Request: `QuoteForm` — 12 fields, with validators: `门店数量` ∈ [1, 30], `成交价系数` ∈ [0.01, 1.0].
-
-Response: `QuoteResponse` → `preview: QuotePreview` + `files: dict[str, FileRef]` + `pricing_version`.
-
-Error: `ErrorResponse` → `error: ErrorDetail`.
+At request time, the XOR+SHA256 obfuscated `references/pricing_baseline_v5.obf` is decoded in memory using `PRICING_BASELINE_KEY` (ported from the legacy skill). Plaintext never touches disk. Strict mode forces the obf+key path; non-strict mode prefers obf but falls back to `data/pricing_baseline.json`; with both missing the service fails to start (no silent empty-items fallback — the root cause of the previously observed Haidilao quote bug).
 
 #### `app/domain/pricing.py` — Pricing Algorithm
 
-Ported line-for-line from the legacy `build_quotation_config.py` (963 lines). The only changes: Pydantic model field access instead of dict subscript, plaintext JSON baseline instead of obfuscated `.obf` files, and `PricingError` / `OutOfRangeError` raised on business-logic failures.
+Ported from the legacy `build_quotation_config.py`. Packages use a `cost × 20` standard price combined with a deep discount factor (typical SaaS high-sticker model); add-on and HQ modules use a `cost × 1.20` / `cost × 1.50` cost-plus markup that protects margin even under deep package discounts. See [`docs/pricing-algorithm.md`](docs/pricing-algorithm.md) for details.
 
 Entry point: `build_quotation_config(form_dict, baseline, product_catalog_path) → dict`
 
-The returned `dict` is the full quotation configuration — the same structure consumed by the PDF and XLSX renderers, and saved as the `.json` download.
+#### `app/domain/quote_service.py` — Business Logic Layer
 
-#### `app/domain/render_pdf.py` + `app/domain/render_xlsx.py` — File Rendering
+`price_and_persist`, `render_format`, `build_preview`, `build_breakdown`, `approval_to_state`, and helpers. Both the legacy `/v1/quote` endpoint and the resource endpoints call into this single service layer, guaranteeing behaviour parity.
 
-Both modules are ported from the legacy `generate_quotation.py` (1,735 lines), split by output format. Entry points:
+#### `app/persistence/` — SQLite Persistence
 
-- `render_pdf(config: dict, fonts_dir: Path) → bytes` — uses reportlab; returns raw PDF bytes
-- `render_xlsx(config: dict) → bytes` — uses openpyxl; returns XLSX bytes via `io.BytesIO`
+Three tables:
 
-Font registration for CJK characters is handled inside `render_pdf`. Fonts are loaded from `data/fonts/` (not in VCS; deploy separately).
+- `quote` — one row per quoted form (deduped by `(org, form_hash)`, optional `idempotency_key`)
+- `quote_render` — one row per generated file
+- `approval` — up to one per quote; state machine `not_required → pending → approved | rejected`
 
-#### `app/api/quote.py` — Route Handler
+Schema is created via `CREATE TABLE IF NOT EXISTS` in the FastAPI lifespan startup. No Alembic yet — UAT stage.
 
-The `POST /v1/quote` handler orchestrates the full pipeline in one request:
+#### `app/api/quotes.py` — Resource-Oriented Routes
 
-1. Parse and validate `QuoteForm` (Pydantic, auto-raises `INVALID_FORM` on failure)
-2. Authenticate caller via `Depends(verify_token(...))`
-3. Generate `request_id`
-4. Load pricing baseline and product catalog from disk
-5. Run `build_quotation_config` → config dict
-6. Render PDF and XLSX
-7. Save all three files (PDF, XLSX, JSON) via `LocalDiskStorage`
-8. Build `QuotePreview` from config
-9. Write audit log
-10. Return `QuoteResponse`
+Five resource endpoints: create, read, on-demand render, explain, approval decision. Render returns 409 when the approval state is anything other than `approved`.
+
+#### `app/api/quote.py` — Legacy Endpoint
+
+`POST /v1/quote` is retained as a compound call: `price_and_persist → render(pdf) → render(xlsx) → render(json) → QuoteResponse`. Approval-required quotes return 409 immediately; clients should migrate to the resource endpoints for those flows.
+
+#### `app/api/catalog.py` — Catalog Endpoint
+
+`GET /v1/catalog` serves the parsed `product_catalog.md` as JSON, giving skill-side clients a single source of truth.
+
+#### `app/auth.py` + `app/cli.py` — Token Management
+
+`secrets.token_urlsafe(32)` generates the raw token; only the `sha256` hex digest lands in `data/tokens.json`, and the plaintext is printed exactly once on creation. Each request hashes the presented bearer and uses `hmac.compare_digest` for timing-safe comparison.
+
+#### `app/audit.py` — Audit Logging
+
+Each successful quote request and approval decision appends one JSON line to `data/audit/YYYY-MM-DD.jsonl`. Fields include `ts`, `request_id`, `quote_id`, `org`, `brand`, `stores`, `package`, `discount`, `final`, `pricing_version`, `status`, `duration_ms`.
 
 ---
 
-### Request Flow Diagram
+### Request Flow
+
+**Resource-oriented (recommended):**
 
 ```
 OpenClaw agent
     │
-    │  POST /v1/quote
-    │  Authorization: Bearer <token>
-    │  {QuoteForm JSON}
-    ▼
-nginx (TLS termination)
+    │ POST /v1/quotes  {QuoteForm}         → price, write quote + approval
+    │ GET  /v1/quotes/{id}                 → read back
+    │ POST /v1/quotes/{id}/approvals/decide → reviewer decision (if required)
+    │ POST /v1/quotes/{id}/render/{format}  → on-demand render
     │
     ▼
-FastAPI app (uvicorn, 127.0.0.1:8000)
-    │
-    ├─ auth.py: verify Bearer token (sha256 + hmac)
-    ├─ schema.py: validate QuoteForm
-    ├─ pricing.py: build quotation config (baseline + product_catalog)
-    ├─ render_pdf.py: generate PDF bytes
-    ├─ render_xlsx.py: generate XLSX bytes
-    ├─ storage.py: save PDF + XLSX + JSON to data/files/<token>/
-    ├─ audit.py: append to data/audit/YYYY-MM-DD.jsonl
-    └─ return QuoteResponse (preview + 3 file URLs)
+FastAPI → auth → schema → quote_service → pricing → render → storage → audit
+                                              │
+                                              ▼
+                                       SQLite data/quote.db
+                                       (quote / quote_render / approval)
+```
 
-    │ GET /files/<token>/<filename>
-    ▼
-nginx (serves data/files/ directly, 7-day expiry header)
+**Legacy (kept for backwards compatibility):**
+
+```
+POST /v1/quote → price_and_persist → render(pdf) + render(xlsx) + render(json)
+               → if approval.pending: 409 APPROVAL_PENDING
+               → otherwise 200 QuoteResponse (3 file URLs)
 ```
 
 ---
@@ -391,13 +447,14 @@ nginx (serves data/files/ directly, 7-day expiry header)
 
 | Component | Tool |
 |---|---|
-| WSGI server | uvicorn (2 workers) |
-| Reverse proxy | nginx (TLS via certbot, file serving via `alias`) |
+| ASGI server | uvicorn |
+| Reverse proxy | nginx (TLS via certbot) |
 | Process manager | systemd (`ops/systemd/quanlaidian-quote.service`) |
-| File cleanup | cron (`ops/cron/cleanup-files.sh`, `find -mtime +7`) |
-| Baseline migration | `ops/migrate_baseline.py` (decrypt `.obf` → plaintext JSON) |
+| Persistence | SQLite (`data/quote.db`) |
+| File cleanup | cron (`ops/cron/cleanup-files.sh`) |
+| Baseline maintenance | `ops/extract_baseline_from_xlsx.py` → `ops/obfuscate_baseline.py` (re-encrypt on pricing change) |
 
-See `ops/runbook.md` for step-by-step first-time deployment, token provisioning, log access, and rollback procedures.
+See [`ops/runbook.md`](ops/runbook.md) for step-by-step first-time deployment, token provisioning, log access, rollback, and baseline rotation.
 
 ---
 
@@ -408,8 +465,7 @@ git clone <repo>
 cd quanlaidian-quote-service
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-cp .env.example .env          # edit as needed
-cp data/pricing_baseline.example.json data/pricing_baseline.json  # populate real data
+cp .env.example .env                 # fill in PRICING_BASELINE_KEY
 uvicorn app.main:app --reload
 ```
 
@@ -417,7 +473,7 @@ Run tests:
 
 ```bash
 pytest tests/ -v
-# 44 tests, all green
+# 77 tests, all green
 ```
 
 Issue a development token:
