@@ -79,12 +79,12 @@ def test_quote_400_factor_without_reason(api_client, sample_form):
     assert body["error"]["code"] == "OUT_OF_RANGE"
     assert body["error"]["field"] == "人工改价原因"
 
-def test_quote_409_factor_triggers_approval(api_client, sample_form):
-    """Manual override without enough history samples → approval required.
+def test_quote_manual_factor_no_approval_gate(api_client, sample_form):
+    """Manual 成交价系数 (even 0.25 for new client) must NOT trigger approval.
 
-    Legacy /v1/quote now returns 409 APPROVAL_PENDING for approval-required
-    quotes (as of Wave B1). Clients that hit this need to switch to the
-    resource-oriented POST /v1/quotes + decide flow.
+    As of 2026-04-20, approval gating was removed by business decision — the
+    system outputs files directly regardless of the factor. Legacy /v1/quote
+    must return 200 with files, never 409 APPROVAL_PENDING.
     """
     client, token = api_client
     sample_form["成交价系数"] = 0.25
@@ -94,15 +94,13 @@ def test_quote_409_factor_triggers_approval(api_client, sample_form):
         json=sample_form,
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert resp.status_code == 409
+    assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["error"]["code"] == "APPROVAL_PENDING"
-    assert "quote_id" in body["error"]
-    assert body["error"]["approval_reasons"]
+    assert set(body["files"].keys()) == {"pdf", "xlsx", "json"}
 
 
-def test_new_quotes_then_decide_then_render(api_client, sample_form):
-    """E2E: POST /v1/quotes → approval pending → decide → render succeeds."""
+def test_new_quotes_renders_without_approval(api_client, sample_form):
+    """Resource-oriented: POST /v1/quotes always state=not_required, render OK."""
     client, token = api_client
     sample_form["成交价系数"] = 0.25
     sample_form["人工改价原因"] = "总部战略客户"
@@ -112,66 +110,12 @@ def test_new_quotes_then_decide_then_render(api_client, sample_form):
     assert r.status_code == 200, r.text
     body = r.json()
     qid = body["quote_id"]
-    assert body["approval"]["state"] == "pending"
-    assert r.headers.get("X-Quote-ID") == qid
-    assert r.headers.get("Idempotency-Key")
+    assert body["approval"]["state"] == "not_required"
+    assert body["approval"]["required"] is False
 
-    # render blocked while pending
-    blocked = client.post(f"/v1/quotes/{qid}/render/pdf", headers=auth)
-    assert blocked.status_code == 409
-
-    # decide approve
-    decided = client.post(
-        f"/v1/quotes/{qid}/approvals/decide",
-        json={"decision": "approve", "reason": "VIP", "approver": "总监张三"},
-        headers=auth,
-    )
-    assert decided.status_code == 200
-    assert decided.json()["state"] == "approved"
-
-    # render now succeeds
     rendered = client.post(f"/v1/quotes/{qid}/render/pdf", headers=auth)
     assert rendered.status_code == 200
     assert rendered.json()["filename"].endswith(".pdf")
-
-
-def test_quote_reject_keeps_render_blocked(api_client, sample_form):
-    """Rejected approval stays non-renderable (no retry path on legacy endpoint)."""
-    client, token = api_client
-    sample_form["成交价系数"] = 0.25
-    sample_form["人工改价原因"] = "测试"
-    auth = {"Authorization": f"Bearer {token}"}
-
-    r = client.post("/v1/quotes", json=sample_form, headers=auth)
-    qid = r.json()["quote_id"]
-
-    rejected = client.post(
-        f"/v1/quotes/{qid}/approvals/decide",
-        json={"decision": "reject", "reason": "超折扣不批", "approver": "主管"},
-        headers=auth,
-    )
-    assert rejected.status_code == 200
-    assert rejected.json()["state"] == "rejected"
-
-    blocked = client.post(f"/v1/quotes/{qid}/render/pdf", headers=auth)
-    assert blocked.status_code == 409
-
-
-def test_quote_decide_wrong_decision_400(api_client, sample_form):
-    client, token = api_client
-    sample_form["成交价系数"] = 0.25
-    sample_form["人工改价原因"] = "测试"
-    auth = {"Authorization": f"Bearer {token}"}
-
-    r = client.post("/v1/quotes", json=sample_form, headers=auth)
-    qid = r.json()["quote_id"]
-
-    bad = client.post(
-        f"/v1/quotes/{qid}/approvals/decide",
-        json={"decision": "maybe", "reason": "x", "approver": "y"},
-        headers=auth,
-    )
-    assert bad.status_code in (400, 500)
 
 
 def test_quote_explain_returns_cost_and_margin(api_client, sample_form):
@@ -312,6 +256,7 @@ def test_quote_persists_to_db(api_client, sample_form, test_data_root):
             "SELECT state FROM approval WHERE quote_id=?", (quote_id,)
         ).fetchall()
         assert len(approvals) == 1
+        assert approvals[0][0] == "not_required"
     finally:
         db.close()
 

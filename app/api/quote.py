@@ -3,9 +3,6 @@
 Kept for UAT clients. Internally delegates to the resource-oriented endpoints
 in quotes.py: one POST /v1/quote call = price_and_persist + render(pdf) +
 render(xlsx) + render(json), packaged into the legacy response envelope.
-
-Approval-required quotes return 409 APPROVAL_PENDING — clients must switch
-to POST /v1/quotes + /v1/quotes/{id}/approvals/decide for those flows.
 """
 import secrets
 import time
@@ -20,13 +17,12 @@ from app.config import settings
 from app.domain.pricing_baseline import load_baseline, pricing_version
 from app.domain.quote_service import (
     build_preview,
-    fetch_approval,
     price_and_persist,
     render_format,
     render_to_file_ref,
 )
 from app.domain.schema import FileRef, QuoteForm, QuoteResponse
-from app.errors import ApprovalPendingError, PricingError
+from app.errors import PricingError
 from app.storage import LocalDiskStorage
 
 router = APIRouter()
@@ -83,9 +79,6 @@ def create_quote_legacy(
         baseline=_get_baseline(),
         product_catalog_path=_get_product_catalog_path(),
     )
-
-    if approval is not None and approval.state == "pending":
-        raise ApprovalPendingError(quote_id=quote.id, reasons=approval.reasons)
 
     storage = _get_storage()
     fonts_dir = settings.data_root / "fonts"

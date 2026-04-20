@@ -769,23 +769,9 @@ def build_approval_decision(
     manual_override,
     protected_item_bypass,
 ):
-    reasons = []
-    if final_factor < (base_factor - 0.02):
-        reasons.append("final_factor_below_base_minus_0.02:director_approval")
-    elif final_factor < (base_factor - 0.01):
-        reasons.append("final_factor_below_base_minus_0.01:manager_approval")
-
-    if manual_override and history_sample_count < 6 and route_strategy == "small-segment":
-        reasons.append("manual_override_without_sufficient_history")
-
-    # 保护类商品已硬保护；这里保留审计提示，便于监控拦截链路
-    if protected_item_bypass:
-        reasons.append("protected_item_bypass_applied")
-
-    return {
-        "approval_required": len(reasons) > 0,
-        "approval_reason": reasons,
-    }
+    # 业务上不设审批流程：无论是否人工改价系数、历史样本多少，都直接出报价。
+    # 保留函数签名与调用点以便未来按需恢复。
+    return {"approval_required": False, "approval_reason": []}
 
 
 def build_quotation_config(form: dict, baseline: dict, product_catalog_path: Path, quote_date=None) -> dict:

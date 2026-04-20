@@ -96,7 +96,7 @@ Token 由服务端管理员按组织发放（`python -m app.cli add-token`）。
 
 ### POST /v1/quotes/{quote_id}/render/{format} — 按需渲染
 
-`format ∈ {pdf, xlsx, json}`。首次调用生成文件，之后调用复用上次的 URL；带 `?force=1` 强制重新渲染。如果该报价 `approval.state` 为 `pending` 或 `rejected`，返回 `409 APPROVAL_PENDING`。
+`format ∈ {pdf, xlsx, json}`。首次调用生成文件，之后调用复用上次的 URL；带 `?force=1` 强制重新渲染。
 
 **响应 — HTTP 200：**
 
@@ -182,7 +182,7 @@ skill 端推荐启动时从这里拉，**不要**自己维护一份 `product_cat
 
 一次调用里完成 算价+持久化+PDF+XLSX+JSON 渲染，返回 `QuoteResponse`。
 
-- 需要审批的报价（factor 偏离推荐值过多、人工改价缺足够历史样本等）直接返回 `409 APPROVAL_PENDING`，客户端必须切到资源接口并走 `decide` 流程。
+- 客户端无论是否显式传 `成交价系数`，都会直接出报价和文件，系统不再设审批卡点。`approval.state` 永远为 `not_required`。
 - 仍然支持 `Idempotency-Key`。
 
 **响应片段：**
@@ -243,13 +243,11 @@ skill 端推荐启动时从这里拉，**不要**自己维护一份 `product_cat
 ```json
 {
   "error": {
-    "code": "APPROVAL_PENDING",
-    "message": "quote q_… 需要审批后才能渲染/下发",
+    "code": "OUT_OF_RANGE",
+    "message": "具体错误说明",
     "field": "<相关字段，可选>",
     "hint": "<提示，可选>",
-    "request_id": "req_20260419165334_ac8dbe5f",
-    "quote_id": "q_…",                        // 仅 APPROVAL_PENDING
-    "approval_reasons": [ "…" ]                // 仅 APPROVAL_PENDING
+    "request_id": "req_20260419165334_ac8dbe5f"
   }
 }
 ```
@@ -258,7 +256,6 @@ skill 端推荐启动时从这里拉，**不要**自己维护一份 `product_cat
 |---|---|---|
 | 401 | — | 缺失或错误的 Bearer token |
 | 404 | `NOT_FOUND` | quote 不存在或不属于当前 org |
-| 409 | `APPROVAL_PENDING` | quote 需要审批，且当前 `state` 不是 `approved` |
 | 422 | `INVALID_FORM` | 请求体不符合 schema（缺必填字段、值越界等）|
 | 400 | `OUT_OF_RANGE` | 业务规则越界（缺人工改价原因、Idempotency-Key 冲突等）|
 | 500 | `PRICING_FAILED` | 定价算法错误（如基线或产品目录缺失）|
@@ -443,8 +440,7 @@ FastAPI → auth → schema → quote_service → pricing → render → storage
 
 ```
 POST /v1/quote → price_and_persist → render(pdf) + render(xlsx) + render(json)
-               → 若 approval.pending: 409 APPROVAL_PENDING
-               → 否则 200 QuoteResponse (3 个文件 URL)
+               → 200 QuoteResponse (3 个文件 URL)
 ```
 
 ---

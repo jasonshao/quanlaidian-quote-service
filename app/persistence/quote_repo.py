@@ -204,27 +204,6 @@ def get_approval(conn: sqlite3.Connection, quote_id: str) -> Optional[Approval]:
     return _row_to_approval(row) if row else None
 
 
-def decide_approval(
-    conn: sqlite3.Connection,
-    *,
-    quote_id: str,
-    decision: str,
-    reason: str,
-    approver: str,
-) -> Optional[Approval]:
-    if decision not in {"approved", "rejected"}:
-        raise ValueError(f"invalid decision: {decision}")
-    conn.execute(
-        """
-        UPDATE approval
-           SET state=?, decided_by=?, decision_reason=?, decided_at=?
-         WHERE quote_id=? AND state='pending'
-        """,
-        (decision, approver, reason, _now_iso(), quote_id),
-    )
-    return get_approval(conn, quote_id)
-
-
 def _row_to_quote(row: sqlite3.Row) -> Quote:
     return Quote(
         id=row["id"],

@@ -118,12 +118,6 @@ class QuoteExplain(BaseModel):
     internal_financials: dict
 
 
-class ApprovalDecideRequest(BaseModel):
-    decision: str  # "approve" | "reject"
-    reason: str
-    approver: str
-
-
 class ErrorDetail(BaseModel):
     code: str
     field: Optional[str] = None

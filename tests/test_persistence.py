@@ -6,7 +6,6 @@ from app.persistence import init_db
 from app.persistence.quote_repo import (
     canonical_form_hash,
     create_quote,
-    decide_approval,
     find_by_form_hash,
     get_approval,
     get_quote,
@@ -101,23 +100,13 @@ def test_persist_and_list_renders(conn, sample_form, sample_config):
     assert pdf is not None and pdf.file_token == "t1"
 
 
-def test_approval_pending_then_decide(conn, sample_form, sample_config):
-    q = create_quote(conn, org="acme", form=sample_form, config=sample_config, pricing_version="v1")
-    approval = upsert_approval(conn, quote_id=q.id, required=True, reasons=["final_factor_below_base_minus_0.02:director_approval"])
-    assert approval.state == "pending"
-    assert approval.required is True
-    assert "director_approval" in approval.reasons[0]
-
-    decided = decide_approval(conn, quote_id=q.id, decision="approved", reason="VIP 客户", approver="总监张三")
-    assert decided is not None
-    assert decided.state == "approved"
-    assert decided.decided_by == "总监张三"
-
-
 def test_approval_not_required_when_no_reasons(conn, sample_form, sample_config):
+    """After approval flow removal, upsert_approval is only called with required=False."""
     q = create_quote(conn, org="acme", form=sample_form, config=sample_config, pricing_version="v1")
     approval = upsert_approval(conn, quote_id=q.id, required=False, reasons=[])
     assert approval.state == "not_required"
+    assert approval.required is False
+    assert approval.reasons == []
 
 
 def test_find_by_form_hash(conn, sample_form, sample_config):

@@ -10,7 +10,6 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, Header, Request, Response
 
 from app.auth import TokenInfo, verify_token
-from app.audit import log_request
 from app.config import settings
 from app.domain.pricing_baseline import load_baseline, pricing_version
 from app.domain.quote_service import (
@@ -24,8 +23,6 @@ from app.domain.quote_service import (
     render_to_file_ref,
 )
 from app.domain.schema import (
-    ApprovalDecideRequest,
-    ApprovalState,
     FileRef,
     QuoteCreated,
     QuoteDetail,
@@ -33,9 +30,9 @@ from app.domain.schema import (
     QuoteForm,
     QuoteTotals,
 )
-from app.errors import ApprovalPendingError, NotFoundError, PricingError
+from app.errors import NotFoundError, PricingError
 from app.persistence import get_conn
-from app.persistence.quote_repo import decide_approval as _decide_approval, list_renders
+from app.persistence.quote_repo import list_renders
 from app.storage import LocalDiskStorage
 
 router = APIRouter()
@@ -157,7 +154,7 @@ def render_quote_format(
     force: bool = False,
     token_info: TokenInfo = Depends(verify_token(settings.data_root / "tokens.json")),
 ):
-    """Render on demand. Blocked if approval is required and still pending."""
+    """Render on demand."""
     request.state.request_id = _gen_request_id()
     if format not in {"pdf", "xlsx", "json"}:
         raise NotFoundError("render-format", format)
@@ -166,10 +163,6 @@ def render_quote_format(
         quote = fetch_quote_or_404(settings.data_root / "quote.db", quote_id, token_info.org)
     except PricingError:
         raise NotFoundError("quote", quote_id)
-
-    approval = fetch_approval(settings.data_root / "quote.db", quote_id)
-    if approval is not None and approval.state in {"pending", "rejected"}:
-        raise ApprovalPendingError(quote_id=quote_id, reasons=approval.reasons)
 
     render = render_format(
         quote=quote,
@@ -207,39 +200,3 @@ def explain_quote(
     )
 
 
-@router.post("/v1/quotes/{quote_id}/approvals/decide", response_model=ApprovalState)
-def decide_quote_approval(
-    quote_id: str,
-    body: ApprovalDecideRequest,
-    request: Request,
-    token_info: TokenInfo = Depends(verify_token(settings.data_root / "tokens.json")),
-):
-    request.state.request_id = _gen_request_id()
-    if body.decision not in {"approve", "reject"}:
-        raise PricingError(message=f"invalid decision: {body.decision}")
-    state = "approved" if body.decision == "approve" else "rejected"
-
-    try:
-        fetch_quote_or_404(settings.data_root / "quote.db", quote_id, token_info.org)
-    except PricingError:
-        raise NotFoundError("quote", quote_id)
-
-    with get_conn(settings.data_root / "quote.db") as conn:
-        decided = _decide_approval(
-            conn,
-            quote_id=quote_id,
-            decision=state,
-            reason=body.reason,
-            approver=body.approver,
-        )
-
-    log_request(settings.data_root / "audit", {
-        "ts": datetime.now(timezone.utc).isoformat(),
-        "request_id": request.state.request_id,
-        "quote_id": quote_id,
-        "org": token_info.org,
-        "event": "approval_decide",
-        "decision": state,
-        "approver": body.approver,
-    })
-    return approval_to_state(decided)

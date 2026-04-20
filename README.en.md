@@ -94,7 +94,7 @@ Returns preview, approval state, and already-rendered files.
 
 ### POST /v1/quotes/{quote_id}/render/{format} — On-Demand Render
 
-`format ∈ {pdf, xlsx, json}`. First call generates the file; subsequent calls reuse the URL. Pass `?force=1` to force a fresh render. If `approval.state` is `pending` or `rejected`, returns `409 APPROVAL_PENDING`.
+`format ∈ {pdf, xlsx, json}`. First call generates the file; subsequent calls reuse the URL. Pass `?force=1` to force a fresh render.
 
 **Response — HTTP 200:**
 
@@ -178,7 +178,7 @@ Skill clients should fetch this at startup rather than ship their own copy of `p
 
 One call: price + persist + PDF + XLSX + JSON render, returned as `QuoteResponse`.
 
-- Quotes that trigger approval (factor far from the recommended value, manual override without sufficient history samples, etc.) return `409 APPROVAL_PENDING`; clients must switch to the resource endpoints and go through `decide`.
+- Regardless of whether the client passes `成交价系数`, the request returns files directly — the service no longer enforces any approval gate. `approval.state` is always `not_required`.
 - `Idempotency-Key` still honored.
 
 ```json
@@ -237,13 +237,11 @@ All errors share the same envelope:
 ```json
 {
   "error": {
-    "code": "APPROVAL_PENDING",
-    "message": "quote q_… requires approval before it can be rendered",
+    "code": "OUT_OF_RANGE",
+    "message": "specific error message",
     "field": "<optional_field_name>",
     "hint": "<optional_hint>",
-    "request_id": "req_20260419165334_ac8dbe5f",
-    "quote_id": "q_…",                         // APPROVAL_PENDING only
-    "approval_reasons": [ "…" ]                 // APPROVAL_PENDING only
+    "request_id": "req_20260419165334_ac8dbe5f"
   }
 }
 ```
@@ -252,7 +250,6 @@ All errors share the same envelope:
 |---|---|---|
 | 401 | — | Missing or invalid Bearer token |
 | 404 | `NOT_FOUND` | Quote does not exist or does not belong to the caller's org |
-| 409 | `APPROVAL_PENDING` | Quote requires approval and is not currently `approved` |
 | 422 | `INVALID_FORM` | Request body fails schema validation |
 | 400 | `OUT_OF_RANGE` | Business-rule violation (missing manual-override reason, Idempotency-Key conflict, etc.) |
 | 500 | `PRICING_FAILED` | Pricing algorithm error (missing baseline or product catalog) |
@@ -437,8 +434,7 @@ FastAPI → auth → schema → quote_service → pricing → render → storage
 
 ```
 POST /v1/quote → price_and_persist → render(pdf) + render(xlsx) + render(json)
-               → if approval.pending: 409 APPROVAL_PENDING
-               → otherwise 200 QuoteResponse (3 file URLs)
+               → 200 QuoteResponse (3 file URLs)
 ```
 
 ---

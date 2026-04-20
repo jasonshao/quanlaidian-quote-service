@@ -114,8 +114,8 @@ hint:    "门店数量需在 1–30 之间"
 | `history_filtered_reason_summary` | 历史样本过滤原因统计 |
 | `legacy_factor` | 旧算法推荐系数（对照用） |
 | `new_vs_legacy_factor_delta` | 新旧算法差值 |
-| `approval_required` | 是否需要审批 |
-| `approval_reason` | 触发审批的原因列表 |
+| `approval_required` | 保留字段，恒为 `false`（审批流程已于 2026-04-20 业务决策下线） |
+| `approval_reason` | 保留字段，恒为 `[]` |
 | `manual_override_audit` | 人工改价审计记录 |
 | `protected_item_bypass` | 是否存在受保护商品绕过 |
 | `small_segment_enabled` | 是否启用小段路由 |
