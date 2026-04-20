@@ -212,8 +212,7 @@ def fmt_money(val):
     if val is None or val == '赠送':
         return '赠送'
     try:
-        d = Decimal(str(val)).quantize(Decimal('0.00'), rounding=ROUND_HALF_UP)
-        return '{:,.2f}'.format(float(d))
+        return '{:,}'.format(int(Decimal(str(val)).quantize(Decimal('1'), rounding=ROUND_HALF_UP)))
     except:
         return str(val)
 
@@ -238,13 +237,13 @@ def get_deal_price_factor(item_or_tier, default=1.0):
 
 def calc_actual_price(std_price, deal_price_factor):
     raw = Decimal(str(std_price)) * Decimal(str(deal_price_factor))
-    return raw.quantize(Decimal('0.00'), rounding=ROUND_HALF_UP)
+    return raw.quantize(Decimal('1'), rounding=ROUND_HALF_UP)
 
 
 def _money_decimal(value, default='0.00'):
     if value in (None, '', '赠送'):
         return Decimal(str(default))
-    return Decimal(str(value)).quantize(Decimal('0.00'), rounding=ROUND_HALF_UP)
+    return Decimal(str(value)).quantize(Decimal('1'), rounding=ROUND_HALF_UP)
 
 
 def get_item_unit_price(item):
@@ -263,7 +262,7 @@ def get_item_subtotal(item):
     if unit_price == '赠送':
         return '赠送'
     qty = Decimal(str(item.get('数量', 1)))
-    return (unit_price * qty).quantize(Decimal('0.00'), rounding=ROUND_HALF_UP)
+    return (unit_price * qty).quantize(Decimal('1'), rounding=ROUND_HALF_UP)
 
 
 def get_item_cost_unit_price(item):
@@ -279,7 +278,7 @@ def get_item_cost_subtotal(item):
     if cost_unit_price is None:
         return None
     qty = Decimal(str(item.get('数量', 1)))
-    return (cost_unit_price * qty).quantize(Decimal('0.00'), rounding=ROUND_HALF_UP)
+    return (cost_unit_price * qty).quantize(Decimal('1'), rounding=ROUND_HALF_UP)
 
 
 def get_tier_unit_price(item, tier_factor):

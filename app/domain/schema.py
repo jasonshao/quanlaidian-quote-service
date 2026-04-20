@@ -99,11 +99,11 @@ class QuoteItemBreakdown(BaseModel):
     unit: str
     qty: int
     list_price: int
-    unit_price: float
-    subtotal: float
-    cost_unit_price: float
-    cost_subtotal: float
-    profit: float
+    unit_price: int
+    subtotal: int
+    cost_unit_price: int
+    cost_subtotal: int
+    profit: int
     margin_pct: float
     protected: bool
     factor: float

@@ -92,7 +92,7 @@ def round_to_10(value):
 
 
 def round_money(value):
-    return float(Decimal(str(value)).quantize(Decimal("0.00"), rounding=ROUND_HALF_UP))
+    return int(Decimal(str(value)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
 def parse_markdown_table(lines):
