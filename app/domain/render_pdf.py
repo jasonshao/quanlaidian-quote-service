@@ -123,6 +123,41 @@ BORDER_COLOR = colors.HexColor('#d0d5dd')
 TOTAL_BG = colors.HexColor('#FFF5D6')
 ACCENT = colors.HexColor('#FFB300')
 
+# ============================================================
+# Header logos (drawn via canvas callback on every page)
+# ============================================================
+_LOGO_DIR = Path(__file__).resolve().parents[2] / 'data' / 'logos'
+_LOGO_SHOUQIANBA = _LOGO_DIR / 'shouqianba.png'
+_LOGO_QUANLAIDIAN = _LOGO_DIR / 'quanlaidian.png'
+_LOGO_HEIGHT_MM = 10
+_LOGO_GAP_MM = 4
+_LOGO_LEFT_MM = 15
+_LOGO_TOP_MM = 8
+
+
+def _draw_header_logos(canvas, doc):
+    """Draw two brand logos in the top-left of every page."""
+    from reportlab.lib.utils import ImageReader
+    page_width, page_height = A4
+    x = _LOGO_LEFT_MM * mm
+    target_h = _LOGO_HEIGHT_MM * mm
+
+    for path in (_LOGO_SHOUQIANBA, _LOGO_QUANLAIDIAN):
+        if not path.exists():
+            continue
+        try:
+            img = ImageReader(str(path))
+            iw, ih = img.getSize()
+            target_w = target_h * iw / ih
+            y = page_height - _LOGO_TOP_MM * mm - target_h
+            canvas.drawImage(
+                img, x, y, width=target_w, height=target_h,
+                mask='auto', preserveAspectRatio=True,
+            )
+            x += target_w + _LOGO_GAP_MM * mm
+        except Exception:
+            pass
+
 
 # ============================================================
 # 样式定义
@@ -917,8 +952,8 @@ def render_pdf(config: dict, fonts_dir: Path | None = None) -> bytes:
         pagesize=A4,
         leftMargin=15*mm,
         rightMargin=15*mm,
-        topMargin=15*mm,
+        topMargin=22*mm,
         bottomMargin=15*mm,
     )
-    doc.build(story)
+    doc.build(story, onFirstPage=_draw_header_logos, onLaterPages=_draw_header_logos)
     return buf.getvalue()
