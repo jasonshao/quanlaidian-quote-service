@@ -47,8 +47,12 @@
    ```bash
    source .venv/bin/activate
    python -m app.cli add-token --org <org-name>
-   # Save the printed token — it's shown only once
+   # Default: 180-day expiry. Save the printed plaintext — it's shown only once.
+   # For a permanent token: python -m app.cli add-token --org <name> --no-expire
    ```
+
+   Tokens are stored hashed in `data/quote.db`'s `api_token` table. The CLI
+   never prints the hash for existing tokens.
 
 6. Install systemd service:
    ```bash
@@ -100,13 +104,45 @@ python ops/obfuscate_baseline.py \
 rm /tmp/pricing_baseline.json
 ```
 
-## Adding New Tokens
+## Managing Tokens
 
 ```bash
 cd /opt/quanlaidian-quote
 source .venv/bin/activate
+
+# Add a new token (default: 180-day expiry)
 python -m app.cli add-token --org <org-name>
+python -m app.cli add-token --org <org-name> --expires-in 30d
+python -m app.cli add-token --org <org-name> --no-expire
+
+# List tokens (shows token_id, org, created, expires, status, last_used_on)
+python -m app.cli list-tokens
+
+# Revoke a token
+python -m app.cli revoke-token --id tok_xxxxxxxx
 ```
+
+Tokens live in `data/quote.db`'s `api_token` table. Server stores only
+`sha256(plaintext)`; the plaintext is shown once at creation and cannot
+be retrieved again — lose it and you must issue a new one.
+
+## Migrating legacy tokens.json (one-time)
+
+Older deploys used `data/tokens.json` as a flat JSON file. To move those
+tokens into the new `api_token` table:
+
+```bash
+cd /opt/quanlaidian-quote
+source .venv/bin/activate
+python -m app.cli migrate-tokens-json
+# prints: migrated N token(s), skipped 0 duplicate(s)
+# tokens.json is renamed to tokens.json.migrated-<UTC timestamp>
+sudo systemctl restart quanlaidian-quote
+```
+
+Verify: old clients whose plaintext tokens were issued via the legacy
+CLI should still authenticate (the hash is preserved). Migrated tokens
+carry no expiry — rotate them on your own schedule.
 
 ## Viewing Logs
 

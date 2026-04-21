@@ -28,7 +28,15 @@ All requests must include a Bearer token in the `Authorization` header:
 Authorization: Bearer <token>
 ```
 
-Tokens are issued per organisation by the server administrator (`python -m app.cli add-token`). A missing or incorrect token returns `HTTP 401`. All quote resources are scoped by `org`; cross-organisation access returns `HTTP 404`.
+Tokens are issued per organisation by the server administrator (`python -m app.cli add-token --org <name>`; default expiry 180 days, `--no-expire` to override). Tokens live in the `api_token` table of `quote.db`; the server stores only `sha256(plaintext)`. A missing / wrong / revoked / expired token returns `HTTP 401`. All quote resources are scoped by `org`; cross-organisation access returns `HTTP 404`.
+
+Token management commands:
+
+```bash
+python -m app.cli list-tokens                  # list all tokens (never prints hashes)
+python -m app.cli revoke-token --id tok_xxxx   # revoke
+python -m app.cli migrate-tokens-json          # one-time: import legacy data/tokens.json
+```
 
 ### Idempotency (Idempotency-Key)
 
@@ -315,9 +323,8 @@ quanlaidian-quote-service/
 │       ├── models.py                  # Quote / QuoteRender / Approval dataclasses
 │       └── quote_repo.py              # CRUD + idempotency logic
 ├── data/                              # Runtime state (NOT in VCS)
-│   ├── quote.db                       # SQLite: quote / quote_render / approval
+│   ├── quote.db                       # SQLite: quote / quote_render / approval / api_token
 │   ├── pricing_baseline.json          # Plaintext baseline (optional; obf preferred)
-│   ├── tokens.json                    # SHA-256 hashed tokens
 │   ├── fonts/                         # CJK fonts for PDF rendering
 │   ├── files/                         # Generated files (7-day TTL)
 │   └── audit/                         # YYYY-MM-DD.jsonl audit logs
@@ -326,7 +333,7 @@ quanlaidian-quote-service/
 │   └── pricing_baseline_v5.obf        # Obfuscated baseline (preferred in production)
 ├── docs/
 │   └── pricing-algorithm.md           # Pricing algorithm reference
-├── tests/                             # 77 tests, all passing
+├── tests/                             # all tests green
 │   ├── conftest.py
 │   ├── fixtures/
 │   ├── test_api.py                    # Endpoint integration tests (incl. new resources)
@@ -402,7 +409,7 @@ Five resource endpoints: create, read, on-demand render, explain, approval decis
 
 #### `app/auth.py` + `app/cli.py` — Token Management
 
-`secrets.token_urlsafe(32)` generates the raw token; only the `sha256` hex digest lands in `data/tokens.json`, and the plaintext is printed exactly once on creation. Each request hashes the presented bearer and uses `hmac.compare_digest` for timing-safe comparison.
+`secrets.token_urlsafe(32)` generates a 256-bit random bearer; only `sha256(plaintext)` lands in the `api_token` table of `data/quote.db` (fields: `token_id / token_hash / org / created_at / expires_at / revoked_at / last_used_on`). The plaintext is printed exactly once on creation. Each request looks up the hash filtered by `revoked_at` and `expires_at`, then uses `hmac.compare_digest` for timing-safe comparison. `last_used_on` is updated at most once per token per UTC day (day-sampled via an in-process cache).
 
 #### `app/audit.py` — Audit Logging
 
@@ -469,12 +476,22 @@ Run tests:
 
 ```bash
 pytest tests/ -v
-# 77 tests, all green
+# all tests green
 ```
 
 Issue a development token:
 
 ```bash
 python -m app.cli add-token --org dev
-# prints plaintext token — use in QUOTE_API_TOKEN env var on the client
+# prints token_id + plaintext (plaintext shown only once)
+# use plaintext in the client's QUOTE_API_TOKEN env var
+```
+
+Other token management commands:
+
+```bash
+python -m app.cli list-tokens
+python -m app.cli revoke-token --id tok_xxxxxxxx
+python -m app.cli add-token --org staging --expires-in 30d   # custom expiry
+python -m app.cli add-token --org admin --no-expire          # never expires
 ```

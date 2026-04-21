@@ -29,6 +29,17 @@ class QuoteRender:
 
 
 @dataclass
+class ApiToken:
+    token_id: str
+    token_hash: str
+    org: str
+    created_at: str
+    expires_at: Optional[str] = None
+    revoked_at: Optional[str] = None
+    last_used_on: Optional[str] = None
+
+
+@dataclass
 class Approval:
     id: str
     quote_id: str

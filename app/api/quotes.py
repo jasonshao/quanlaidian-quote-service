@@ -76,7 +76,7 @@ def create_quote_resource(
     request: Request,
     response: Response,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-    token_info: TokenInfo = Depends(verify_token(settings.data_root / "tokens.json")),
+    token_info: TokenInfo = Depends(verify_token(settings.data_root / "quote.db")),
 ):
     """Price + persist only — no files. Idempotent per (org, form).
 
@@ -116,7 +116,7 @@ def create_quote_resource(
 def get_quote_resource(
     quote_id: str,
     request: Request,
-    token_info: TokenInfo = Depends(verify_token(settings.data_root / "tokens.json")),
+    token_info: TokenInfo = Depends(verify_token(settings.data_root / "quote.db")),
 ):
     request.state.request_id = _gen_request_id()
     try:
@@ -152,7 +152,7 @@ def render_quote_format(
     format: str,
     request: Request,
     force: bool = False,
-    token_info: TokenInfo = Depends(verify_token(settings.data_root / "tokens.json")),
+    token_info: TokenInfo = Depends(verify_token(settings.data_root / "quote.db")),
 ):
     """Render on demand."""
     request.state.request_id = _gen_request_id()
@@ -179,7 +179,7 @@ def render_quote_format(
 def explain_quote(
     quote_id: str,
     request: Request,
-    token_info: TokenInfo = Depends(verify_token(settings.data_root / "tokens.json")),
+    token_info: TokenInfo = Depends(verify_token(settings.data_root / "quote.db")),
 ):
     """Per-item cost/profit breakdown. Internal-use — shows wholesale cost."""
     request.state.request_id = _gen_request_id()
