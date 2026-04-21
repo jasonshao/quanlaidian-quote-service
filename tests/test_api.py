@@ -208,18 +208,17 @@ def test_quote_422_invalid_form(api_client):
     body = resp.json()
     assert body["error"]["code"] == "INVALID_FORM"
 
-def test_quote_31_stores_rejected_at_schema_layer(api_client, sample_form):
-    """31+ stores must be rejected.
+def test_quote_301_stores_rejected_at_schema_layer(api_client, sample_form):
+    """301+ stores must be rejected.
 
-    Two-layer defense: Pydantic schema (le=30, returns 422) is the outer
+    Two-layer defense: Pydantic schema (le=300, returns 422) is the outer
     guard; pricing layer's OutOfRangeError (returns 400) is an inner guard
-    covered by tests/test_pricing.py::test_31_stores_rejected. If the
+    covered by tests/test_pricing.py::test_301_stores_rejected. If the
     schema constraint ever drops, this test switches to 400 and the
-    pricing layer catches the request — either way 31 stores never
-    succeeds.
+    pricing layer catches the request — either way 301 stores never succeeds.
     """
     client, token = api_client
-    sample_form["门店数量"] = 31
+    sample_form["门店数量"] = 301
     resp = client.post(
         "/v1/quote",
         json=sample_form,
@@ -228,6 +227,65 @@ def test_quote_31_stores_rejected_at_schema_layer(api_client, sample_form):
     assert resp.status_code == 422
     body = resp.json()
     assert body["error"]["code"] == "INVALID_FORM"
+
+
+def test_quote_31_stores_now_goes_large_segment(api_client, sample_form):
+    """31 店曾被拒,现在走大客户段阶梯报价(不再 422)。"""
+    client, token = api_client
+    sample_form["门店数量"] = 31
+    resp = client.post(
+        "/v1/quote",
+        json=sample_form,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    # schema 放行。具体 200/400 取决于是否触发其他校验失败;这里只验证不是 422
+    assert resp.status_code != 422
+
+
+def test_quote_56_stores_effective_store_count_is_50(api_client, sample_form):
+    """56 店请求 → 主报价按下锚点 50 店生成(effective_store_count=50)。"""
+    client, token = api_client
+    sample_form["门店数量"] = 56
+    resp = client.post(
+        "/v1/quote",
+        json=sample_form,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    # preview 主报价应该按 50 店算(下锚点 tier_window[0])
+    assert body["preview"]["stores"] == 50
+
+
+def test_quote_explain_surfaces_tier_window_for_large_segment(api_client, sample_form):
+    """56 店 → pricing_info 里有 effective_store_count 和 original_requested_store_count。"""
+    client, token = api_client
+    sample_form["门店数量"] = 150
+    auth = {"Authorization": f"Bearer {token}"}
+    created = client.post("/v1/quotes", json=sample_form, headers=auth)
+    assert created.status_code == 200, created.text
+    qid = created.json()["quote_id"]
+
+    explain = client.post(f"/v1/quotes/{qid}/explain", headers=auth)
+    assert explain.status_code == 200
+    pi = explain.json()["pricing_info"]
+    assert pi["route_strategy"] == "large-segment"
+    assert pi["original_requested_store_count"] == 150
+    assert pi["effective_store_count"] == 100  # tier_window[0] for 150
+    assert pi["algorithm_version"] == "large-segment-v1"
+
+
+def test_quote_200_stores_effective_is_200(api_client, sample_form):
+    """锚点精确命中:200 店 → effective=200(tier_window=[200,300])。"""
+    client, token = api_client
+    sample_form["门店数量"] = 200
+    resp = client.post(
+        "/v1/quote",
+        json=sample_form,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["preview"]["stores"] == 200
 
 def test_quote_persists_to_db(api_client, sample_form, test_data_root):
     """POST /v1/quote must write a row to quote + 3 renders + approval row."""

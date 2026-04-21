@@ -50,9 +50,10 @@ def test_with_delivery_center(empty_baseline):
     assert "配送中心" in item_names
 
 
-def test_31_stores_rejected(empty_baseline):
+def test_301_stores_rejected(empty_baseline):
+    """边界搬:31+ 现在走大客户段(tier 对比),只有 301+ 拒绝。"""
     form = _load_form("form_light_meal_5_stores.json")
-    form["门店数量"] = 31
+    form["门店数量"] = 301
     from app.errors import OutOfRangeError
     with pytest.raises((OutOfRangeError, ValueError)):
         build_quotation_config(form, empty_baseline, PRODUCT_CATALOG)
@@ -141,6 +142,226 @@ def test_load_baseline_falls_back_to_plaintext_when_no_key(tmp_path):
 
     baseline = load_baseline(json_path=plaintext, obf_path=obf)
     assert baseline["items"][0]["name"] == "from_plaintext"
+
+
+# ============================================================================
+# Large-segment (31-300 stores) tests — independent of product_catalog fixture.
+# ============================================================================
+
+
+class TestLargeSegmentFactors:
+    """Anchor factors at 50/100/200/300 stores."""
+
+    def test_factor_light_50(self):
+        from app.domain.pricing import recommend_base_deal_price_factor_smooth
+        assert recommend_base_deal_price_factor_smooth(50, "轻餐") == 0.15
+
+    def test_factor_full_50(self):
+        from app.domain.pricing import recommend_base_deal_price_factor_smooth
+        assert recommend_base_deal_price_factor_smooth(50, "正餐") == 0.18
+
+    def test_factor_light_100(self):
+        from app.domain.pricing import recommend_base_deal_price_factor_smooth
+        assert recommend_base_deal_price_factor_smooth(100, "轻餐") == 0.13
+
+    def test_factor_full_100(self):
+        from app.domain.pricing import recommend_base_deal_price_factor_smooth
+        assert recommend_base_deal_price_factor_smooth(100, "正餐") == 0.16
+
+    def test_factor_light_200(self):
+        from app.domain.pricing import recommend_base_deal_price_factor_smooth
+        assert recommend_base_deal_price_factor_smooth(200, "轻餐") == 0.12
+
+    def test_factor_full_200(self):
+        from app.domain.pricing import recommend_base_deal_price_factor_smooth
+        assert recommend_base_deal_price_factor_smooth(200, "正餐") == 0.14
+
+    def test_factor_light_300(self):
+        from app.domain.pricing import recommend_base_deal_price_factor_smooth
+        assert recommend_base_deal_price_factor_smooth(300, "轻餐") == 0.11
+
+    def test_factor_full_300(self):
+        from app.domain.pricing import recommend_base_deal_price_factor_smooth
+        assert recommend_base_deal_price_factor_smooth(300, "正餐") == 0.13
+
+
+class TestSmallSegmentRegression:
+    """Pin 1-30 curve values so large-segment changes don't silently alter old segment."""
+
+    def test_factor_1_store_full(self):
+        from app.domain.pricing import recommend_base_deal_price_factor_smooth
+        # start_factor = 3000 / 11120
+        assert abs(recommend_base_deal_price_factor_smooth(1, "正餐") - 3000 / 11120) < 1e-9
+
+    def test_factor_1_store_light(self):
+        from app.domain.pricing import recommend_base_deal_price_factor_smooth
+        assert abs(recommend_base_deal_price_factor_smooth(1, "轻餐") - 1800 / 7600) < 1e-9
+
+    def test_factor_20_stores_full(self):
+        from app.domain.pricing import recommend_base_deal_price_factor_smooth
+        assert abs(recommend_base_deal_price_factor_smooth(20, "正餐") - (3000 / 11120 - 0.05)) < 1e-9
+
+    def test_factor_30_stores_full(self):
+        from app.domain.pricing import recommend_base_deal_price_factor_smooth, round_factor
+        # 20 店因子 - 10 × step; 现有公式末端 ≈ 0.1936
+        assert round_factor(recommend_base_deal_price_factor_smooth(30, "正餐")) == 0.19
+
+    def test_factor_30_stores_light(self):
+        from app.domain.pricing import recommend_base_deal_price_factor_smooth, round_factor
+        assert round_factor(recommend_base_deal_price_factor_smooth(30, "轻餐")) == 0.16
+
+
+class TestLargeSegmentNonAnchorRejected:
+    """31-300 non-anchor values must not be fed into factor function — factor is only
+    defined at anchors. Large-segment code path picks an anchor via resolve_tier_window."""
+
+    def test_31_stores_raises(self):
+        from app.domain.pricing import recommend_base_deal_price_factor_smooth
+        with pytest.raises(ValueError):
+            recommend_base_deal_price_factor_smooth(31, "正餐")
+
+    def test_56_stores_raises(self):
+        from app.domain.pricing import recommend_base_deal_price_factor_smooth
+        with pytest.raises(ValueError):
+            recommend_base_deal_price_factor_smooth(56, "正餐")
+
+    def test_150_stores_raises(self):
+        from app.domain.pricing import recommend_base_deal_price_factor_smooth
+        with pytest.raises(ValueError):
+            recommend_base_deal_price_factor_smooth(150, "轻餐")
+
+    def test_301_stores_raises_out_of_range(self):
+        from app.domain.pricing import recommend_base_deal_price_factor_smooth
+        from app.errors import OutOfRangeError
+        with pytest.raises(OutOfRangeError):
+            recommend_base_deal_price_factor_smooth(301, "正餐")
+
+
+class TestResolveTierWindow:
+    """resolve_tier_window(n) — picks the [lower, upper] anchor pair covering n."""
+
+    def test_30_stores(self):
+        from app.domain.pricing import resolve_tier_window
+        assert resolve_tier_window(30) == [30, 50]
+
+    def test_31_stores(self):
+        from app.domain.pricing import resolve_tier_window
+        assert resolve_tier_window(31) == [30, 50]
+
+    def test_50_stores(self):
+        from app.domain.pricing import resolve_tier_window
+        assert resolve_tier_window(50) == [50, 100]
+
+    def test_56_stores(self):
+        from app.domain.pricing import resolve_tier_window
+        assert resolve_tier_window(56) == [50, 100]
+
+    def test_99_stores(self):
+        from app.domain.pricing import resolve_tier_window
+        assert resolve_tier_window(99) == [50, 100]
+
+    def test_100_stores(self):
+        from app.domain.pricing import resolve_tier_window
+        assert resolve_tier_window(100) == [100, 200]
+
+    def test_150_stores(self):
+        from app.domain.pricing import resolve_tier_window
+        assert resolve_tier_window(150) == [100, 200]
+
+    def test_199_stores(self):
+        from app.domain.pricing import resolve_tier_window
+        assert resolve_tier_window(199) == [100, 200]
+
+    def test_200_stores(self):
+        from app.domain.pricing import resolve_tier_window
+        assert resolve_tier_window(200) == [200, 300]
+
+    def test_250_stores(self):
+        from app.domain.pricing import resolve_tier_window
+        assert resolve_tier_window(250) == [200, 300]
+
+    def test_300_stores(self):
+        from app.domain.pricing import resolve_tier_window
+        assert resolve_tier_window(300) == [200, 300]
+
+    def test_301_stores_raises(self):
+        from app.domain.pricing import resolve_tier_window
+        from app.errors import OutOfRangeError
+        with pytest.raises(OutOfRangeError):
+            resolve_tier_window(301)
+
+    def test_29_stores_raises(self):
+        """< 30 不应该走 tier window(属于 small-segment 单点)"""
+        from app.domain.pricing import resolve_tier_window
+        with pytest.raises(ValueError):
+            resolve_tier_window(29)
+
+
+class TestBuildTierConfigLargeSegment:
+    """build_tier_config with store_count >=31 generates 2-tier comparison,
+    ignoring the enabled flag."""
+
+    def test_56_stores_gives_50_100_tiers_full(self):
+        from app.domain.pricing import build_tier_config
+        tiers = build_tier_config(False, "正餐", 56)  # enabled=False, but >=31 forces tiers
+        assert [t["门店数"] for t in tiers] == [50, 100]
+        assert tiers[0]["成交价系数"] == 0.18
+        assert tiers[1]["成交价系数"] == 0.16
+
+    def test_56_stores_gives_50_100_tiers_light(self):
+        from app.domain.pricing import build_tier_config
+        tiers = build_tier_config(False, "轻餐", 56)
+        assert [t["门店数"] for t in tiers] == [50, 100]
+        assert tiers[0]["成交价系数"] == 0.15
+        assert tiers[1]["成交价系数"] == 0.13
+
+    def test_250_stores_gives_200_300_tiers(self):
+        from app.domain.pricing import build_tier_config
+        tiers = build_tier_config(False, "正餐", 250)
+        assert [t["门店数"] for t in tiers] == [200, 300]
+
+    def test_small_segment_enabled_still_10_20_30(self):
+        """≤30 + enabled=True: 保留现状 [10, 20, 30]"""
+        from app.domain.pricing import build_tier_config
+        tiers = build_tier_config(True, "正餐", 15)
+        assert [t["门店数"] for t in tiers] == [10, 20, 30]
+
+    def test_small_segment_disabled_returns_empty(self):
+        """≤30 + enabled=False: 保留现状 no tiers"""
+        from app.domain.pricing import build_tier_config
+        assert build_tier_config(False, "正餐", 15) == []
+
+
+class TestFactorMonotonic:
+    """因子随门店数严格单调递减(全段,含锚点和 1-30 段)"""
+
+    @pytest.mark.parametrize("meal_type", ["轻餐", "正餐"])
+    def test_monotonic_small_segment(self, meal_type):
+        from app.domain.pricing import recommend_base_deal_price_factor_smooth
+        factors = [recommend_base_deal_price_factor_smooth(n, meal_type) for n in range(1, 31)]
+        for i in range(len(factors) - 1):
+            assert factors[i] > factors[i + 1], (
+                f"{meal_type} non-monotonic at n={i + 1} → n={i + 2}: "
+                f"{factors[i]} ≤ {factors[i + 1]}"
+            )
+
+    @pytest.mark.parametrize("meal_type", ["轻餐", "正餐"])
+    def test_monotonic_anchors(self, meal_type):
+        from app.domain.pricing import recommend_base_deal_price_factor_smooth
+        anchors = [50, 100, 200, 300]
+        factors = [recommend_base_deal_price_factor_smooth(n, meal_type) for n in anchors]
+        for i in range(len(factors) - 1):
+            assert factors[i] > factors[i + 1], (
+                f"{meal_type} anchors non-monotonic {anchors[i]}→{anchors[i + 1]}"
+            )
+
+    @pytest.mark.parametrize("meal_type", ["轻餐", "正餐"])
+    def test_30_to_50_is_descending(self, meal_type):
+        """30 店(公式末端)到 50 店(锚点)必须单调递减"""
+        from app.domain.pricing import recommend_base_deal_price_factor_smooth
+        f30 = recommend_base_deal_price_factor_smooth(30, meal_type)
+        f50 = recommend_base_deal_price_factor_smooth(50, meal_type)
+        assert f30 > f50, f"{meal_type}: 30 店 {f30} 应 > 50 店 {f50}"
 
 
 def test_module_unit_price_follows_markup_rule(empty_baseline):
