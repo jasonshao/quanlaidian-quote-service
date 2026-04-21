@@ -20,11 +20,20 @@ from app.domain.pricing_baseline import PRICING_VERSION
 from app.errors import OutOfRangeError
 
 SMALL_SEGMENT_MAX_STORES = 30
+LARGE_SEGMENT_MAX_STORES = 300
 DEFAULT_SMALL_SEGMENT_ENABLED = True
 HISTORY_WINDOW_MONTHS = 12
 SMALL_SEGMENT_START_UNIT_PRICE = {
     "轻餐": 1800,
     "正餐": 3000,
+}
+
+# 大客户段(31-300 店)锚点折扣因子 — 业务经验值。
+# 由业务/商务定期 review;调整后重新部署。
+# 锚点之间不做插值:非锚点请求 → resolve_tier_window 返回"夹住"的上下两档。
+LARGE_SEGMENT_ANCHORS: dict[str, list[tuple[int, float]]] = {
+    "轻餐": [(50, 0.15), (100, 0.13), (200, 0.12), (300, 0.11)],
+    "正餐": [(50, 0.18), (100, 0.16), (200, 0.14), (300, 0.13)],
 }
 
 PROTECTED_PRODUCT_NAMES = {
@@ -237,10 +246,25 @@ def _small_segment_bucket(store_count):
         return "small-1-10"
     if 11 <= store_count <= 30:
         return "small-11-30"
+    if 31 <= store_count <= 100:
+        return "large-31-100"
+    if 101 <= store_count <= 300:
+        return "large-101-300"
     return None
 
 
 def recommend_base_deal_price_factor_smooth(store_count, meal_type):
+    """Return the discount factor for `store_count` of `meal_type`.
+
+    Two regimes:
+    - 1-30 (small segment): piecewise-linear smooth curve, slope -0.05/19.
+    - {50, 100, 200, 300} (large segment anchors): table lookup.
+
+    31+ non-anchor values (e.g. 56, 150) are NOT directly priced — the caller
+    must first resolve the tier window via `resolve_tier_window(n)` and feed
+    the anchor endpoints into this function. A non-anchor value in 31-300
+    raises ValueError (defensive); > 300 raises OutOfRangeError.
+    """
     # 新起步锚点：
     # 轻餐 1 店 1800，正餐 1 店 3000
     start_factor_map = {
@@ -248,18 +272,61 @@ def recommend_base_deal_price_factor_smooth(store_count, meal_type):
         "正餐": SMALL_SEGMENT_START_UNIT_PRICE["正餐"] / 11120,
     }
     start_factor = start_factor_map[meal_type]
-    # 沿用原有斜率：每跨 19 店总下降 0.05
+    # 1-30: 沿用原有斜率,每跨 19 店总下降 0.05
     if store_count <= 20:
         return start_factor - 0.05 * (store_count - 1) / 19
     if store_count <= 30:
         step = 0.05 / 19
         factor_at_20 = start_factor - 0.05
         return factor_at_20 - step * (store_count - 20)
-    raise OutOfRangeError(
-        field="门店数量",
-        message="31店及以上暂不受理，请转人工定价",
-        hint="门店数量需在 1–30 之间",
+    # 大段超限
+    if store_count > LARGE_SEGMENT_MAX_STORES:
+        raise OutOfRangeError(
+            field="门店数量",
+            message="301店及以上暂不受理，请转人工定价",
+            hint="门店数量需在 1–300 之间",
+        )
+    # 31-300: 只接受锚点值
+    for anchor_count, anchor_factor in LARGE_SEGMENT_ANCHORS[meal_type]:
+        if store_count == anchor_count:
+            return anchor_factor
+    raise ValueError(
+        f"非锚点门店数 {store_count},请先调用 resolve_tier_window() 取锚点"
     )
+
+
+def resolve_tier_window(store_count: int) -> list[int]:
+    """Return the [lower, upper] anchor pair that covers `store_count` in the
+    large-segment (31-300) range. Boundary rule: left-closed, right-open,
+    except the final segment which is right-closed.
+
+    - 30 ≤ n < 50  → [30, 50]   (30 is the small-segment endpoint used as
+                                 the lower reference, not itself an anchor
+                                 in LARGE_SEGMENT_ANCHORS)
+    - 50 ≤ n < 100 → [50, 100]
+    - 100 ≤ n < 200 → [100, 200]
+    - 200 ≤ n ≤ 300 → [200, 300]
+    - n < 30: ValueError (that's small-segment single-point territory)
+    - n > 300: OutOfRangeError
+    """
+    if store_count > LARGE_SEGMENT_MAX_STORES:
+        raise OutOfRangeError(
+            field="门店数量",
+            message="301店及以上暂不受理，请转人工定价",
+            hint="门店数量需在 1–300 之间",
+        )
+    if store_count < 30:
+        raise ValueError(
+            f"门店数 {store_count} 属于小段(1-30)单点报价,不应调用 resolve_tier_window"
+        )
+    if 30 <= store_count < 50:
+        return [30, 50]
+    if 50 <= store_count < 100:
+        return [50, 100]
+    if 100 <= store_count < 200:
+        return [100, 200]
+    # 200 ≤ store_count ≤ 300
+    return [200, 300]
 
 
 def small_segment_bounds(store_count, meal_type):
@@ -339,8 +406,8 @@ def should_filter_history_sample(sample, meal_type, sample_bucket):
     sc = int(sc)
     if sc <= 0:
         return "invalid_store_count"
-    if sc > SMALL_SEGMENT_MAX_STORES:
-        return "out_of_small_segment"
+    if sc > LARGE_SEGMENT_MAX_STORES:
+        return "out_of_supported_range"
 
     bucket = _small_segment_bucket(sc)
     if sample_bucket and bucket != sample_bucket:
@@ -516,8 +583,11 @@ def lookup_product(index, name, meal_type=None, group=None):
 def determine_route_strategy(form):
     store_count = int(form["门店数量"])
     small_segment_enabled = as_bool(form.get("small_segment_enabled"), default=DEFAULT_SMALL_SEGMENT_ENABLED)
+    if store_count > LARGE_SEGMENT_MAX_STORES:
+        return "unsupported", "store_count_gt_300"
     if store_count > SMALL_SEGMENT_MAX_STORES:
-        return "unsupported", "store_count_gt_30"
+        # 31-300: 大客户段,强制走阶梯对比
+        return "large-segment", "store_count_31_to_300_tiered"
     if not small_segment_enabled:
         return "legacy", "small_segment_enabled=false"
 
@@ -550,11 +620,11 @@ def validate_form(form, product_index, route_strategy):
 
     if int(form["门店数量"]) <= 0:
         raise ValueError("门店数量必须大于 0")
-    if int(form["门店数量"]) > SMALL_SEGMENT_MAX_STORES:
+    if int(form["门店数量"]) > LARGE_SEGMENT_MAX_STORES:
         raise OutOfRangeError(
             field="门店数量",
-            message="31店及以上暂不受理，请转人工定价",
-            hint="门店数量需在 1–30 之间",
+            message="301店及以上暂不受理，请转人工定价",
+            hint="门店数量需在 1–300 之间",
         )
 
     recommended_factor, chosen_factor, factor_source = normalize_deal_price_factor(form, route_strategy)
@@ -701,10 +771,21 @@ def default_terms():
     ]
 
 
-def build_tier_config(enabled, meal_type):
-    if not enabled:
+def build_tier_config(enabled, meal_type, store_count):
+    """Return tier comparison table entries.
+
+    - store_count >= 31 (large segment): ALWAYS return the 2-anchor window
+      that brackets store_count, regardless of `enabled`. This is the core
+      "31+ 强制阶梯" behavior.
+    - store_count <= 30 (small segment): return [10,20,30] if `enabled`,
+      else empty.
+    """
+    if store_count >= 31:
+        candidates = resolve_tier_window(store_count)
+    elif enabled:
+        candidates = [10, 20, 30]
+    else:
         return []
-    candidates = [10, 20, 30]
     tiers = []
     for count in candidates:
         factor = round_factor(recommend_base_deal_price_factor_smooth(count, meal_type))
@@ -779,8 +860,22 @@ def build_quotation_config(form: dict, baseline: dict, product_catalog_path: Pat
     baseline_index = build_pricing_baseline_index(baseline)
     product_index = build_product_index(products)
     meal_type = form["餐饮类型"]
-    store_count = int(form["门店数量"])
+    requested_store_count = int(form["门店数量"])
+
+    # 大客户段(31-300):把请求门店数替换成"下锚点"。主报价 items 按下锚点
+    # 的门店数 + 因子生成;原始请求值保留在 original_requested_store_count
+    # 里(审计用),阶梯对比表则使用 requested_store_count 决定窗口
+    # (resolve_tier_window),展示 [下锚点, 上锚点] 两档。
     route_strategy, route_reason = determine_route_strategy(form)
+    if route_strategy == "large-segment":
+        tier_window = resolve_tier_window(requested_store_count)
+        effective_store_count = tier_window[0]
+        form = dict(form)
+        form["门店数量"] = effective_store_count
+    else:
+        effective_store_count = requested_store_count
+    store_count = effective_store_count
+
     normalized = validate_form(form, product_index, route_strategy)
     deal_price_factor = normalized["deal_price_factor"]
     recommended_factor = normalized["recommended_factor"]
@@ -912,7 +1007,10 @@ def build_quotation_config(form: dict, baseline: dict, product_catalog_path: Pat
             "scope_match": route_strategy == "small-segment",
             "route_strategy": route_strategy,
             "route_reason": route_reason,
-            "algorithm_version": PRICING_VERSION if route_strategy == "small-segment" else "legacy-v1",
+            "algorithm_version": (
+                PRICING_VERSION if route_strategy == "small-segment"
+                else ("large-segment-v1" if route_strategy == "large-segment" else "legacy-v1")
+            ),
             "sample_bucket": sample_bucket,
             "base_factor": round_factor(recommended_factor),
             "auto_adjustments": auto_adjustments,
@@ -945,7 +1043,11 @@ def build_quotation_config(form: dict, baseline: dict, product_catalog_path: Pat
         },
     }
 
-    tiers = build_tier_config(form.get("是否启用阶梯报价"), meal_type)
+    tiers = build_tier_config(form.get("是否启用阶梯报价"), meal_type, requested_store_count)
     if tiers:
         config["阶梯配置"] = tiers
+    if route_strategy == "large-segment":
+        config["original_requested_store_count"] = requested_store_count
+        config["pricing_info"]["original_requested_store_count"] = requested_store_count
+        config["pricing_info"]["effective_store_count"] = effective_store_count
     return config

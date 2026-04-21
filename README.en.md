@@ -224,7 +224,7 @@ Shared by `POST /v1/quotes` and the legacy `POST /v1/quote`:
 |---|---|---|---|---|
 | `客户品牌名称` | string | ✅ | — | Customer brand name |
 | `餐饮类型` | string | ✅ | `"轻餐"` or `"正餐"` | Dining category |
-| `门店数量` | integer | ✅ | 1 – 30 | Number of stores (31+ → 422, route through manual pricing) |
+| `门店数量` | integer | ✅ | 1 – 300 | Number of stores. 301+ → 422 (manual pricing). 31-300 enters large-segment tier-comparison mode — main quote uses the lower anchor's factor, response includes a tier-comparison page. See [pricing algorithm §5](docs/pricing-algorithm.md). |
 | `门店套餐` | string | ✅ | — | Store package name — must match a name in [`references/product_catalog.md`](references/product_catalog.md) |
 | `门店增值模块` | string[] | ❌ | — | Optional add-on modules per store |
 | `总部模块` | string[] | ❌ | — | Optional HQ-level modules |

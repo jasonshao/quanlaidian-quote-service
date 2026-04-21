@@ -159,10 +159,15 @@ def build_preview(config: dict, form: dict) -> QuotePreview:
     total_list = sum(i.list * i.qty for i in items_preview)
     total_final = sum(i.final for i in items_preview)
     pricing_info = config.get("pricing_info", {})
+    # preview.stores 反映实际报价使用的门店数。对于大客户段(31-300),
+    # config["门店数量"] 已被 build_quotation_config 替换为 effective
+    # store count(tier_window[0]);小段情况下 config["门店数量"] ==
+    # form["门店数量"]。两种场景都优先用 config。
+    effective_stores = int(config.get("门店数量", form["门店数量"]))
     return QuotePreview(
         brand=form["客户品牌名称"],
         meal_type=form["餐饮类型"],
-        stores=int(form["门店数量"]),
+        stores=effective_stores,
         package=form["门店套餐"],
         discount=float(pricing_info.get("final_factor", 1.0)),
         totals=QuoteTotals(list=total_list, final=total_final),

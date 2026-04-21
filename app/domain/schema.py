@@ -7,7 +7,7 @@ class QuoteForm(BaseModel):
     """Input: quotation request form from OpenClaw"""
     客户品牌名称: str
     餐饮类型: str  # "轻餐" or "正餐"
-    门店数量: int = Field(ge=1, le=30)
+    门店数量: int = Field(ge=1, le=300)
     门店套餐: str
     门店增值模块: list[str] = Field(default_factory=list)
     总部模块: list[str] = Field(default_factory=list)
