@@ -48,6 +48,20 @@ CREATE TABLE IF NOT EXISTS approval (
     decision_reason TEXT,
     decided_at      TEXT
 );
+
+CREATE TABLE IF NOT EXISTS api_token (
+    token_id     TEXT PRIMARY KEY,
+    token_hash   TEXT NOT NULL UNIQUE,
+    org          TEXT NOT NULL,
+    created_at   TEXT NOT NULL,
+    expires_at   TEXT,
+    revoked_at   TEXT,
+    last_used_on TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_api_token_hash
+    ON api_token(token_hash);
+CREATE INDEX IF NOT EXISTS idx_api_token_org
+    ON api_token(org);
 """
 
 

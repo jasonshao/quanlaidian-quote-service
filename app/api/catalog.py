@@ -32,7 +32,7 @@ def _product_catalog_path() -> Path:
 def get_catalog(
     request: Request,
     meal_type: str | None = None,
-    token_info: TokenInfo = Depends(verify_token(settings.data_root / "tokens.json")),
+    token_info: TokenInfo = Depends(verify_token(settings.data_root / "quote.db")),
 ):
     """Return product list parsed from product_catalog.md.
 

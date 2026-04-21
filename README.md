@@ -28,7 +28,15 @@ UAT 阶段可能会通过 IP 直连（见运维方提供的实际地址）。客
 Authorization: Bearer <token>
 ```
 
-Token 由服务端管理员按组织发放（`python -m app.cli add-token`）。缺失或错误返回 `HTTP 401`。所有 quote 资源按 `org` 隔离，跨组织访问返回 `HTTP 404`。
+Token 由服务端管理员按组织发放（`python -m app.cli add-token --org <name>`，默认 180 天过期，`--no-expire` 可覆盖）。Token 存储在 `quote.db` 的 `api_token` 表中，服务端仅保存 `sha256(plaintext)`。缺失 / 错误 / 吊销 / 过期均返回 `HTTP 401`。所有 quote 资源按 `org` 隔离，跨组织访问返回 `HTTP 404`。
+
+Token 运维命令：
+
+```bash
+python -m app.cli list-tokens                  # 列出所有 token（不打印 hash）
+python -m app.cli revoke-token --id tok_xxxx   # 吊销
+python -m app.cli migrate-tokens-json          # 一次性：把旧 data/tokens.json 迁入 api_token 表
+```
 
 ### 幂等（Idempotency-Key）
 
@@ -321,9 +329,8 @@ quanlaidian-quote-service/
 │       ├── models.py                  # Quote / QuoteRender / Approval 数据类
 │       └── quote_repo.py              # CRUD + 幂等逻辑
 ├── data/                              # 运行时状态（不入 VCS）
-│   ├── quote.db                       # SQLite: quote / quote_render / approval
+│   ├── quote.db                       # SQLite: quote / quote_render / approval / api_token
 │   ├── pricing_baseline.json          # 明文基线（可选，obf 作为首选）
-│   ├── tokens.json                    # SHA-256 哈希 token
 │   ├── fonts/                         # CJK 字体（PDF 渲染用）
 │   ├── files/                         # 生成的文件（7 天 TTL）
 │   └── audit/                         # YYYY-MM-DD.jsonl 审计
@@ -332,7 +339,7 @@ quanlaidian-quote-service/
 │   └── pricing_baseline_v5.obf        # 混淆基线（生产首选）
 ├── docs/
 │   └── pricing-algorithm.md           # 定价算法说明（审计参考）
-├── tests/                             # 77 个测试全绿
+├── tests/                             # 所有测试全绿
 │   ├── conftest.py
 │   ├── fixtures/
 │   ├── test_api.py                    # 端点集成测试（含新资源端点）
@@ -408,7 +415,7 @@ Pydantic `BaseSettings` 从环境变量读取配置：
 
 #### `app/auth.py` + `app/cli.py` — Token
 
-`secrets.token_urlsafe(32)` 生成原始 token，只存 `sha256` 哈希到 `data/tokens.json`，明文仅创建时打印一次。每次请求 `hmac.compare_digest` 比对，时序安全。
+`secrets.token_urlsafe(32)` 生成 256-bit 随机 token,只存 `sha256(plaintext)` 到 `data/quote.db` 的 `api_token` 表(字段:`token_id / token_hash / org / created_at / expires_at / revoked_at / last_used_on`)。明文仅创建时打印一次。每次请求在表中按 hash 查活跃行(过滤 `revoked_at` 和 `expires_at`)并用 `hmac.compare_digest` 做常数时间比对。日粒度更新 `last_used_on`(进程内缓存去重,每 token/每 UTC 日最多一次写)。
 
 #### `app/audit.py` — 审计日志
 
@@ -475,12 +482,22 @@ uvicorn app.main:app --reload
 
 ```bash
 pytest tests/ -v
-# 77 个测试全部通过
+# 全部测试绿
 ```
 
 发放开发 token：
 
 ```bash
 python -m app.cli add-token --org dev
-# 打印明文 token — 用作客户端的 QUOTE_API_TOKEN 环境变量
+# 打印 token_id + 明文（明文只显示一次）
+# 明文作为客户端的 QUOTE_API_TOKEN 环境变量
+```
+
+其他 token 管理命令：
+
+```bash
+python -m app.cli list-tokens
+python -m app.cli revoke-token --id tok_xxxxxxxx
+python -m app.cli add-token --org staging --expires-in 30d   # 自定义过期
+python -m app.cli add-token --org admin --no-expire          # 永不过期
 ```

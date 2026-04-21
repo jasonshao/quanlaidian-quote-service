@@ -64,7 +64,7 @@ def _get_product_catalog_path() -> Path:
 def create_quote_legacy(
     form: QuoteForm,
     request: Request,
-    token_info: TokenInfo = Depends(verify_token(settings.data_root / "tokens.json")),
+    token_info: TokenInfo = Depends(verify_token(settings.data_root / "quote.db")),
 ):
     request_id = _gen_request_id()
     request.state.request_id = request_id
@@ -102,6 +102,7 @@ def create_quote_legacy(
         "request_id": request_id,
         "quote_id": quote.id,
         "org": token_info.org,
+        "token_id": token_info.token_id,
         "brand": form.客户品牌名称,
         "stores": form.门店数量,
         "package": form.门店套餐,

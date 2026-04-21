@@ -1,5 +1,3 @@
-import hashlib
-import json
 import shutil
 import pytest
 from pathlib import Path
@@ -36,17 +34,26 @@ def test_data_root(tmp_path):
 
 @pytest.fixture
 def test_token(test_data_root):
-    """Create a valid test token and return the plaintext."""
+    """Create a valid test token and return the plaintext.
+
+    Seeds the api_token table directly; api_client fixture ensures the
+    schema is initialized via FastAPI lifespan's init_db call.
+    """
+    from app.persistence import init_db, get_conn
+    from app.persistence.token_repo import create_token, hash_token, new_token_id
+
     plaintext = "test-integration-token-12345"
-    token_hash = hashlib.sha256(plaintext.encode()).hexdigest()
-    tokens = {
-        token_hash: {
-            "org": "test-org",
-            "created_at": "2026-01-01T00:00:00Z",
-            "rate_limit_per_min": 60,
-        }
-    }
-    (test_data_root / "tokens.json").write_text(json.dumps(tokens), encoding="utf-8")
+    db_path = test_data_root / "quote.db"
+    init_db(db_path)
+    with get_conn(db_path) as conn:
+        create_token(
+            conn,
+            token_id=new_token_id(),
+            token_hash=hash_token(plaintext),
+            org="test-org",
+            created_at="2026-01-01T00:00:00+00:00",
+            expires_at=None,
+        )
     return plaintext
 
 @pytest.fixture
@@ -70,16 +77,21 @@ def api_client(test_data_root, test_token, monkeypatch):
     monkeypatch.setattr("app.api.catalog.settings", new_settings, raising=False)
     monkeypatch.setattr("app.api.health.settings", new_settings, raising=False)
 
-    # Override product catalog path lookup
+    # Override product catalog path lookup when running on a workstation that
+    # has the quanlaidian-quotation-skill repo cloned alongside this repo.
+    # On hosts without that skill repo (e.g. CI / ECS), fall through to the
+    # production resolver which finds references/product_catalog.md inside
+    # this repo itself.
     product_catalog = Path("/Users/sqb/ai/quanlaidian-quotation-skill/references/product_catalog.md")
-    monkeypatch.setattr("app.api.quote._get_product_catalog_path", lambda: product_catalog)
+    if product_catalog.exists():
+        monkeypatch.setattr("app.api.quote._get_product_catalog_path", lambda: product_catalog)
 
     from app.main import app
     from app.auth import verify_token, TokenInfo
 
-    # Override the auth dependency to use the test tokens file
-    tokens_path = test_data_root / "tokens.json"
-    app.dependency_overrides[verify_token(new_settings.data_root / "tokens.json")] = verify_token(tokens_path)
+    # Override the auth dependency to use the test DB
+    db_path = test_data_root / "quote.db"
+    app.dependency_overrides[verify_token(new_settings.data_root / "quote.db")] = verify_token(db_path)
 
     # TestClient as context manager triggers FastAPI lifespan (runs init_db)
     with TestClient(app, raise_server_exceptions=False) as client:
