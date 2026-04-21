@@ -129,8 +129,8 @@ ACCENT = colors.HexColor('#FFB300')
 _LOGO_DIR = Path(__file__).resolve().parents[2] / 'data' / 'logos'
 _LOGO_SHOUQIANBA = _LOGO_DIR / 'shouqianba.png'
 _LOGO_QUANLAIDIAN = _LOGO_DIR / 'quanlaidian.png'
-_LOGO_HEIGHT_MM = 10
-_LOGO_GAP_MM = 4
+_LOGO_HEIGHT_MM = 7
+_LOGO_GAP_MM = 3
 _LOGO_LEFT_MM = 15
 _LOGO_TOP_MM = 8
 
@@ -952,7 +952,7 @@ def render_pdf(config: dict, fonts_dir: Path | None = None) -> bytes:
         pagesize=A4,
         leftMargin=15*mm,
         rightMargin=15*mm,
-        topMargin=22*mm,
+        topMargin=18*mm,
         bottomMargin=15*mm,
     )
     doc.build(story, onFirstPage=_draw_header_logos, onLaterPages=_draw_header_logos)
