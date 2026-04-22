@@ -67,6 +67,7 @@ def api_client(test_data_root, test_token, monkeypatch):
         api_base_url="http://testserver",
         data_root=test_data_root,
         file_ttl_days=7,
+        storage_backend="local",
         log_level="WARNING",
     )
 

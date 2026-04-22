@@ -33,7 +33,7 @@ from app.domain.schema import (
 from app.errors import NotFoundError, PricingError
 from app.persistence import get_conn
 from app.persistence.quote_repo import list_renders
-from app.storage import LocalDiskStorage
+from app.storage import Storage, build_storage
 
 router = APIRouter()
 
@@ -43,12 +43,8 @@ def _gen_request_id() -> str:
     return f"req_{ts}_{secrets.token_hex(4)}"
 
 
-def _storage() -> LocalDiskStorage:
-    return LocalDiskStorage(
-        root=settings.data_root / "files",
-        base_url=settings.api_base_url,
-        ttl_days=settings.file_ttl_days,
-    )
+def _storage() -> Storage:
+    return build_storage(settings)
 
 
 def _baseline() -> dict:
@@ -198,5 +194,4 @@ def explain_quote(
         pricing_info=config.get("pricing_info", {}),
         internal_financials=config.get("internal_financials", {}),
     )
-
 

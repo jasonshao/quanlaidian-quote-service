@@ -1,7 +1,8 @@
 import pytest
+import types
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
-from app.storage import LocalDiskStorage
+from app.storage import LocalDiskStorage, OssStorage
 
 @pytest.fixture
 def storage(tmp_path):
@@ -31,3 +32,52 @@ def test_save_unique_tokens(storage):
     _, _, token1 = storage.save("a.pdf", b"data1")
     _, _, token2 = storage.save("b.pdf", b"data2")
     assert token1 != token2
+
+
+def test_oss_storage_save_returns_signed_url(monkeypatch):
+    calls = {}
+
+    class FakeBucket:
+        def __init__(self, auth, endpoint, bucket_name):
+            calls["bucket_name"] = bucket_name
+            calls["endpoint"] = endpoint
+
+        def put_object(self, key, content):
+            calls["put_key"] = key
+            calls["put_size"] = len(content)
+
+        def sign_url(self, method, key, expires_in):
+            calls["sign_method"] = method
+            calls["sign_key"] = key
+            calls["expires_in"] = expires_in
+            return f"https://private-wosai-statics.oss-cn-hangzhou.aliyuncs.com/{key}?signed=1"
+
+    fake_oss2 = types.SimpleNamespace(
+        Auth=lambda *_args, **_kwargs: object(),
+        Bucket=FakeBucket,
+    )
+    monkeypatch.setitem(__import__("sys").modules, "oss2", fake_oss2)
+
+    storage = OssStorage(
+        endpoint="oss-cn-hangzhou.aliyuncs.com",
+        bucket_name="private-wosai-statics",
+        access_key_id="ak",
+        access_key_secret="sk",
+        prefix="quanlaidian-quote",
+        public_base_url="https://private-resource.shouqianba.com",
+        ttl_days=7,
+    )
+    url, expires_at, token = storage.save("quote.pdf", b"hello")
+
+    assert calls["bucket_name"] == "private-wosai-statics"
+    assert calls["endpoint"] == "https://oss-cn-hangzhou.aliyuncs.com"
+    assert calls["put_key"].startswith("quanlaidian-quote/")
+    assert calls["put_key"].endswith("/quote.pdf")
+    assert calls["put_size"] == 5
+    assert calls["sign_method"] == "GET"
+    assert calls["sign_key"] == calls["put_key"]
+    assert calls["expires_in"] > 0
+    assert token == url
+    assert url.startswith("https://private-resource.shouqianba.com/")
+    expected = datetime.now(timezone.utc) + timedelta(days=7)
+    assert abs((expires_at - expected).total_seconds()) < 5
