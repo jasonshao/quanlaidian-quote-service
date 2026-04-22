@@ -26,7 +26,59 @@ from app.domain.render_pdf import (
     gen_quote_number,
     calc_actual_price,
     fmt_pct,
+    _LOGO_SHOUQIANBA,
+    _LOGO_QUANLAIDIAN,
 )
+
+
+# ============================================================
+# Header logos — inserted at top-left of every sheet's row 1.
+# Caller MUST leave row 1 free (content starts from row 2).
+# ============================================================
+_XL_LOGO_HEIGHT_PX = 26       # ~7mm at 96 DPI, matches PDF logo size
+_XL_LOGO_GAP_PX = 8            # ~3mm horizontal gap between the two logos
+_XL_LOGO_ROW_HEIGHT_PT = 26    # ~35px row height, leaves ~9px padding
+_XL_LOGO_LEFT_OFFSET_PX = 4    # small left inset inside column A
+
+
+def _xl_add_header_logos(ws):
+    """Anchor 收钱吧 + 全来店 logos side-by-side in the top-left of `ws`.
+
+    Row 1's height is set to reserve space for the logos. The caller is
+    responsible for ensuring no other content lives in row 1.
+    """
+    from openpyxl.drawing.image import Image as XLImage
+    from openpyxl.drawing.spreadsheet_drawing import OneCellAnchor, AnchorMarker
+    from openpyxl.drawing.xdr import XDRPositiveSize2D
+    from openpyxl.utils.units import pixels_to_EMU
+
+    ws.row_dimensions[1].height = _XL_LOGO_ROW_HEIGHT_PT
+
+    x_cursor_px = _XL_LOGO_LEFT_OFFSET_PX
+    for path in (_LOGO_SHOUQIANBA, _LOGO_QUANLAIDIAN):
+        if not path.exists():
+            continue
+        try:
+            img = XLImage(str(path))
+            aspect = img.width / img.height if img.height else 1.0
+            scaled_h = _XL_LOGO_HEIGHT_PX
+            scaled_w = int(scaled_h * aspect)
+            img.height = scaled_h
+            img.width = scaled_w
+
+            marker = AnchorMarker(
+                col=0, colOff=pixels_to_EMU(x_cursor_px),
+                row=0, rowOff=pixels_to_EMU(2),
+            )
+            ext = XDRPositiveSize2D(
+                cx=pixels_to_EMU(scaled_w),
+                cy=pixels_to_EMU(scaled_h),
+            )
+            img.anchor = OneCellAnchor(_from=marker, ext=ext)
+            ws.add_image(img)
+            x_cursor_px += scaled_w + _XL_LOGO_GAP_PX
+        except Exception:
+            pass
 
 
 def _xl_header_style(cell):
@@ -212,21 +264,24 @@ def _generate_xlsx_standard(data):
 
     _xl_set_col_widths(ws)
 
-    # ── 标题区（行1-2） ──
-    ws.merge_cells('A1:G1')
-    c = ws.cell(row=1, column=1, value='"全来店"产品报价单')
-    _xl_title_style(c, size=16)
-    ws.row_dimensions[1].height = 36
+    # ── Logo 行（行1）──
+    _xl_add_header_logos(ws)
 
+    # ── 标题区（行2-3） ──
     ws.merge_cells('A2:G2')
-    c = ws.cell(row=2, column=1, value='上海收钱吧互联网科技股份有限公司')
+    c = ws.cell(row=2, column=1, value='"全来店"产品报价单')
+    _xl_title_style(c, size=16)
+    ws.row_dimensions[2].height = 36
+
+    ws.merge_cells('A3:G3')
+    c = ws.cell(row=3, column=1, value='上海收钱吧互联网科技股份有限公司')
     _xl_subtitle_style(c)
-    ws.row_dimensions[2].height = 24
+    ws.row_dimensions[3].height = 24
 
     # ── 空行 ──
-    ws.row_dimensions[3].height = 6
+    ws.row_dimensions[4].height = 6
 
-    # ── 客户信息区（行4-7） ──
+    # ── 客户信息区（行5-8） ──
     client = data.get('客户信息', {})
     quote_no = data.get('报价编号', gen_quote_number())
     quote_date = data.get('报价日期', datetime.now().strftime('%Y年%m月%d日'))
@@ -240,7 +295,7 @@ def _generate_xlsx_standard(data):
     ]
 
     for i, (left, right) in enumerate(info_rows):
-        row_num = 4 + i
+        row_num = 5 + i
         ws.merge_cells(start_row=row_num, start_column=1,
                        end_row=row_num, end_column=4)
         c = ws.cell(row=row_num, column=1, value=left)
@@ -253,11 +308,11 @@ def _generate_xlsx_standard(data):
         ws.row_dimensions[row_num].height = 18
 
     # ── 空行 ──
-    ws.row_dimensions[8].height = 8
+    ws.row_dimensions[9].height = 8
 
-    # ── 报价明细表（从行9开始） ──
+    # ── 报价明细表（从行10开始） ──
     items = data.get('报价项目', [])
-    header_row = 9
+    header_row = 10
     _, total_row = _xl_write_item_table(ws, items, header_row)
 
     # ── 金额大写（合计行下方） ──
@@ -344,7 +399,7 @@ def _generate_xlsx_custom(data):
     ws_cover.column_dimensions['A'].width = 18
     ws_cover.column_dimensions['B'].width = 30
 
-    ws_cover.row_dimensions[1].height = 20
+    _xl_add_header_logos(ws_cover)
     ws_cover.merge_cells('A2:B2')
     c = ws_cover.cell(row=2, column=1, value='"全来店"产品报价方案')
     _xl_title_style(c, size=18)
@@ -424,13 +479,14 @@ def _generate_xlsx_custom(data):
         ws_merged.sheet_view.showGridLines = False
         _xl_set_col_widths(ws_merged)
 
-        ws_merged.merge_cells('A1:G1')
-        c = ws_merged.cell(row=1, column=1, value='门店软件与增值模块')
+        _xl_add_header_logos(ws_merged)
+        ws_merged.merge_cells('A2:G2')
+        c = ws_merged.cell(row=2, column=1, value='门店软件与增值模块')
         _xl_title_style(c, size=14)
-        ws_merged.row_dimensions[1].height = 30
-        ws_merged.row_dimensions[2].height = 8
+        ws_merged.row_dimensions[2].height = 30
+        ws_merged.row_dimensions[3].height = 8
 
-        section_row = 3
+        section_row = 4
         for cat_name in MERGED_SHEET_CATS:
             cat_items = categories[cat_name]
             if not cat_items:
@@ -450,21 +506,22 @@ def _generate_xlsx_custom(data):
             cat_totals[cat_name] = (f'G{total_row}', ws_merged.title)
             section_row = total_row + 2
 
-        ws_merged.freeze_panes = 'A4'
+        ws_merged.freeze_panes = 'A5'
 
     # ── 总部模块 Sheet ──
     if categories.get('总部模块'):
         ws = wb.create_sheet('总部模块')
         ws.sheet_view.showGridLines = False
         _xl_set_col_widths(ws)
-        ws.merge_cells('A1:G1')
-        c = ws.cell(row=1, column=1, value='总部模块')
+        _xl_add_header_logos(ws)
+        ws.merge_cells('A2:G2')
+        c = ws.cell(row=2, column=1, value='总部模块')
         _xl_title_style(c, size=14)
-        ws.row_dimensions[1].height = 30
-        ws.row_dimensions[2].height = 8
+        ws.row_dimensions[2].height = 30
+        ws.row_dimensions[3].height = 8
         display_items = _override_items(categories['总部模块'], deal_price_factor=0.8, qty=1)
-        _, total_row = _xl_write_item_table(ws, display_items, 3, compute_values=True)
-        ws.freeze_panes = 'A4'
+        _, total_row = _xl_write_item_table(ws, display_items, 4, compute_values=True)
+        ws.freeze_panes = 'A5'
         cat_totals['总部模块'] = (f'G{total_row}', ws.title)
 
     # ── 实施服务 Sheet ──
@@ -472,14 +529,15 @@ def _generate_xlsx_custom(data):
         ws = wb.create_sheet('实施服务')
         ws.sheet_view.showGridLines = False
         _xl_set_col_widths(ws)
-        ws.merge_cells('A1:G1')
-        c = ws.cell(row=1, column=1, value='实施服务')
+        _xl_add_header_logos(ws)
+        ws.merge_cells('A2:G2')
+        c = ws.cell(row=2, column=1, value='实施服务')
         _xl_title_style(c, size=14)
-        ws.row_dimensions[1].height = 30
-        ws.row_dimensions[2].height = 8
+        ws.row_dimensions[2].height = 30
+        ws.row_dimensions[3].height = 8
         display_items = _override_items(categories['实施服务'], deal_price_factor=1.0, qty=1)
-        _, total_row = _xl_write_item_table(ws, display_items, 3, compute_values=True)
-        ws.freeze_panes = 'A4'
+        _, total_row = _xl_write_item_table(ws, display_items, 4, compute_values=True)
+        ws.freeze_panes = 'A5'
         cat_totals['实施服务'] = (f'G{total_row}', ws.title)
 
     # ── 封面追加：条款说明 ──
@@ -540,11 +598,14 @@ def _xl_add_tiered_sheet(wb, data):
 
     last_col = tier_col_letters[-1]
 
+    # Logo 行（行1）
+    _xl_add_header_logos(ws)
+
     # 标题
-    ws.merge_cells(f'A1:{last_col}1')
-    c = ws.cell(row=1, column=1, value='阶梯报价参考')
+    ws.merge_cells(f'A2:{last_col}2')
+    c = ws.cell(row=2, column=1, value='阶梯报价参考')
     _xl_title_style(c, size=14)
-    ws.row_dimensions[1].height = 32
+    ws.row_dimensions[2].height = 32
 
     # 表头
     def tier_label(t):
@@ -552,11 +613,11 @@ def _xl_add_tiered_sheet(wb, data):
 
     headers = ['商品名称', '单位'] + [tier_label(t) for t in tiers]
     for ci, h in enumerate(headers, 1):
-        c = ws.cell(row=2, column=ci, value=h)
+        c = ws.cell(row=3, column=ci, value=h)
         _xl_header_style(c)
-    ws.row_dimensions[2].height = 22
+    ws.row_dimensions[3].height = 22
 
-    current_row = 3
+    current_row = 4
 
     cat_order = ['门店软件套餐', '门店增值模块', '总部模块', '实施服务']
     categories = {k: [] for k in cat_order}
@@ -671,7 +732,7 @@ def _xl_add_tiered_sheet(wb, data):
         c.alignment = Alignment(horizontal='right', vertical='center')
     ws.row_dimensions[current_row].height = 18
 
-    _xl_apply_border(ws, 2, 1, current_row, 2 + n_tiers)
+    _xl_apply_border(ws, 3, 1, current_row, 2 + n_tiers)
 
 
 # ============================================================
