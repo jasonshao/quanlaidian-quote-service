@@ -29,7 +29,7 @@ from app.persistence.quote_repo import (
     persist_render as _persist_render,
     upsert_approval,
 )
-from app.storage import LocalDiskStorage
+from app.storage import OssStorage, Storage
 
 
 def sanitize(name: str) -> str:
@@ -88,7 +88,7 @@ def render_format(
     quote: Quote,
     format: str,
     db_path: Path,
-    storage: LocalDiskStorage,
+    storage: Storage,
     fonts_dir: Path,
     force: bool = False,
 ) -> QuoteRender:
@@ -122,7 +122,7 @@ def render_format(
 
     filename = f"{brand}-全来店-{suffix}-{today}.{format}"
     try:
-        _, expires_at, file_token = storage.save(filename, content)
+        download_url, expires_at, file_token = storage.save(filename, content)
     except Exception as e:
         raise RenderError(message=f"{format.upper()} 保存失败: {e}")
 
@@ -131,17 +131,24 @@ def render_format(
             conn,
             quote_id=quote.id,
             format=format,
-            file_token=file_token,
+            file_token=file_token or download_url,
             filename=filename,
             expires_at=expires_at.isoformat(),
         )
 
 
-def render_to_file_ref(render: QuoteRender, base_url: str) -> FileRef:
+def render_to_file_ref(render: QuoteRender, base_url: str, storage: Storage | None = None) -> FileRef:
+    expires_at = datetime.fromisoformat(render.expires_at)
+    if render.file_token.startswith("http://") or render.file_token.startswith("https://"):
+        url = render.file_token
+    elif isinstance(storage, OssStorage):
+        url, expires_at = storage.resolve_url(render.file_token)
+    else:
+        url = f"{base_url.rstrip('/')}/files/{render.file_token}/{render.filename}"
     return FileRef(
-        url=f"{base_url.rstrip('/')}/files/{render.file_token}/{render.filename}",
+        url=url,
         filename=render.filename,
-        expires_at=datetime.fromisoformat(render.expires_at),
+        expires_at=expires_at,
     )
 
 

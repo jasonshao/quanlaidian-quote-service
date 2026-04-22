@@ -23,7 +23,7 @@ from app.domain.quote_service import (
 )
 from app.domain.schema import FileRef, QuoteForm, QuoteResponse
 from app.errors import PricingError
-from app.storage import LocalDiskStorage
+from app.storage import Storage, build_storage
 
 router = APIRouter()
 
@@ -33,12 +33,8 @@ def _gen_request_id() -> str:
     return f"req_{ts}_{secrets.token_hex(4)}"
 
 
-def _get_storage() -> LocalDiskStorage:
-    return LocalDiskStorage(
-        root=settings.data_root / "files",
-        base_url=settings.api_base_url,
-        ttl_days=settings.file_ttl_days,
-    )
+def _get_storage() -> Storage:
+    return build_storage(settings)
 
 
 def _get_baseline() -> dict:
@@ -91,7 +87,7 @@ def create_quote_legacy(
             storage=storage,
             fonts_dir=fonts_dir,
         )
-        files[fmt] = render_to_file_ref(render, settings.api_base_url)
+        files[fmt] = render_to_file_ref(render, settings.api_base_url, storage)
 
     preview = build_preview(config, form_dict)
 

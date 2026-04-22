@@ -33,7 +33,7 @@ from app.domain.schema import (
 from app.errors import NotFoundError, PricingError
 from app.persistence import get_conn
 from app.persistence.quote_repo import list_renders
-from app.storage import LocalDiskStorage
+from app.storage import Storage, build_storage
 
 router = APIRouter()
 
@@ -43,12 +43,8 @@ def _gen_request_id() -> str:
     return f"req_{ts}_{secrets.token_hex(4)}"
 
 
-def _storage() -> LocalDiskStorage:
-    return LocalDiskStorage(
-        root=settings.data_root / "files",
-        base_url=settings.api_base_url,
-        ttl_days=settings.file_ttl_days,
-    )
+def _storage() -> Storage:
+    return build_storage(settings)
 
 
 def _baseline() -> dict:
@@ -131,9 +127,10 @@ def get_quote_resource(
     form = json.loads(quote.form_json)
     config = json.loads(quote.config_json)
 
+    storage = _storage()
     renders_map: dict[str, FileRef] = {}
     for r in renders:
-        renders_map.setdefault(r.format, render_to_file_ref(r, settings.api_base_url))
+        renders_map.setdefault(r.format, render_to_file_ref(r, settings.api_base_url, storage))
 
     return QuoteDetail(
         quote_id=quote.id,
@@ -164,15 +161,16 @@ def render_quote_format(
     except PricingError:
         raise NotFoundError("quote", quote_id)
 
+    storage = _storage()
     render = render_format(
         quote=quote,
         format=format,
         db_path=settings.data_root / "quote.db",
-        storage=_storage(),
+        storage=storage,
         fonts_dir=settings.data_root / "fonts",
         force=force,
     )
-    return render_to_file_ref(render, settings.api_base_url)
+    return render_to_file_ref(render, settings.api_base_url, storage)
 
 
 @router.post("/v1/quotes/{quote_id}/explain", response_model=QuoteExplain)
@@ -198,5 +196,3 @@ def explain_quote(
         pricing_info=config.get("pricing_info", {}),
         internal_financials=config.get("internal_financials", {}),
     )
-
-
