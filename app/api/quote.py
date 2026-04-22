@@ -87,7 +87,7 @@ def create_quote_legacy(
             storage=storage,
             fonts_dir=fonts_dir,
         )
-        files[fmt] = render_to_file_ref(render, settings.api_base_url)
+        files[fmt] = render_to_file_ref(render, settings.api_base_url, storage)
 
     preview = build_preview(config, form_dict)
 

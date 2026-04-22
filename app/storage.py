@@ -53,27 +53,34 @@ class OssStorage:
         auth = oss2.Auth(access_key_id, access_key_secret)
         self.bucket: Any = oss2.Bucket(auth, f"https://{endpoint}", bucket_name)
 
+    def _rewrite_public_host(self, signed_url: str) -> str:
+        if not self.public_base_url:
+            return signed_url
+        parsed_signed = urlparse(signed_url)
+        parsed_public = urlparse(self.public_base_url)
+        return urlunparse(
+            (
+                parsed_public.scheme or parsed_signed.scheme,
+                parsed_public.netloc or parsed_signed.netloc,
+                parsed_signed.path,
+                parsed_signed.params,
+                parsed_signed.query,
+                parsed_signed.fragment,
+            )
+        )
+
+    def resolve_url(self, object_key: str) -> tuple[str, datetime]:
+        expires_at = datetime.now(timezone.utc) + timedelta(days=self.ttl_days)
+        expires_in = max(1, int((expires_at - datetime.now(timezone.utc)).total_seconds()))
+        signed_url = self.bucket.sign_url("GET", object_key, expires_in)
+        return self._rewrite_public_host(signed_url), expires_at
+
     def save(self, filename: str, content: bytes) -> tuple[str, datetime, str]:
         token = secrets.token_urlsafe(24)
         object_key = f"{self.prefix}/{token}/{filename}"
         self.bucket.put_object(object_key, content)
-        expires_at = datetime.now(timezone.utc) + timedelta(days=self.ttl_days)
-        expires_in = max(1, int((expires_at - datetime.now(timezone.utc)).total_seconds()))
-        signed_url = self.bucket.sign_url("GET", object_key, expires_in)
-        if self.public_base_url:
-            parsed_signed = urlparse(signed_url)
-            parsed_public = urlparse(self.public_base_url)
-            signed_url = urlunparse(
-                (
-                    parsed_public.scheme or parsed_signed.scheme,
-                    parsed_public.netloc or parsed_signed.netloc,
-                    parsed_signed.path,
-                    parsed_signed.params,
-                    parsed_signed.query,
-                    parsed_signed.fragment,
-                )
-            )
-        return signed_url, expires_at, signed_url
+        signed_url, expires_at = self.resolve_url(object_key)
+        return signed_url, expires_at, object_key
 
 
 def build_storage(settings: Settings) -> Storage:

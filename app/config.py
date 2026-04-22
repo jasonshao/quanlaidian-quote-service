@@ -6,7 +6,7 @@ class Settings(BaseSettings):
     api_base_url: str = "https://api.quanlaidian.com"
     data_root: Path = Path("data")
     file_ttl_days: int = 7
-    storage_backend: str = "oss"
+    storage_backend: str = "local"
     oss_endpoint: str = "oss-cn-hangzhou.aliyuncs.com"
     oss_bucket: str = "private-wosai-statics"
     oss_prefix: str = "quanlaidian-quote"
