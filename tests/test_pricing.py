@@ -59,6 +59,18 @@ def test_301_stores_rejected(empty_baseline):
         build_quotation_config(form, empty_baseline, PRODUCT_CATALOG)
 
 
+def test_large_segment_150_stores_pricing_info(empty_baseline):
+    """150 店走大客户段: pricing_info 标记 route=large-segment, effective=100(tier 下锚)。"""
+    form = _load_form("form_light_meal_5_stores.json")
+    form["门店数量"] = 150
+    config = build_quotation_config(form, empty_baseline, PRODUCT_CATALOG)
+    pi = config["pricing_info"]
+    assert pi["route_strategy"] == "large-segment"
+    assert pi["algorithm_version"] == "large-segment-v1"
+    assert pi["original_requested_store_count"] == 150
+    assert pi["effective_store_count"] == 100
+
+
 def test_config_structure(empty_baseline):
     """Verify the output config has all expected top-level keys"""
     form = _load_form("form_light_meal_5_stores.json")

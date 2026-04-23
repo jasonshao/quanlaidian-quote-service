@@ -7,10 +7,8 @@ from app.persistence.quote_repo import (
     canonical_form_hash,
     create_quote,
     find_by_form_hash,
-    get_approval,
     get_quote,
     latest_render,
-    list_renders,
     persist_render,
     upsert_approval,
 )
@@ -90,12 +88,10 @@ def test_create_quote_different_org_splits(conn, sample_form, sample_config):
     assert q_a.id != q_b.id
 
 
-def test_persist_and_list_renders(conn, sample_form, sample_config):
+def test_persist_and_latest_render(conn, sample_form, sample_config):
     q = create_quote(conn, org="acme", form=sample_form, config=sample_config, pricing_version="v1")
     persist_render(conn, quote_id=q.id, format="pdf", file_token="t1", filename="a.pdf", expires_at="2099-01-01")
     persist_render(conn, quote_id=q.id, format="xlsx", file_token="t2", filename="a.xlsx", expires_at="2099-01-01")
-    renders = list_renders(conn, q.id)
-    assert len(renders) == 2
     pdf = latest_render(conn, q.id, "pdf")
     assert pdf is not None and pdf.file_token == "t1"
 

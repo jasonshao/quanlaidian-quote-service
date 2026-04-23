@@ -1,41 +1,5 @@
 import pytest
 
-def test_catalog_returns_products(api_client):
-    client, token = api_client
-    resp = client.get("/v1/catalog", headers={"Authorization": f"Bearer {token}"})
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["pricing_version"]
-    assert len(body["items"]) >= 10
-    names = {p["name"] for p in body["items"]}
-    assert "正餐连锁营销旗舰版" in names or "轻餐连锁营销旗舰版" in names
-
-
-def test_catalog_filter_by_meal_type(api_client):
-    client, token = api_client
-    resp = client.get("/v1/catalog?meal_type=正餐", headers={"Authorization": f"Bearer {token}"})
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["meal_type"] == "正餐"
-    # only 正餐 or 通用 items
-    meal_types = {p["meal_type"] for p in body["items"]}
-    assert meal_types.issubset({"正餐", "通用"})
-
-
-def test_catalog_invalid_meal_type_404(api_client):
-    client, token = api_client
-    resp = client.get(
-        "/v1/catalog?meal_type=不存在", headers={"Authorization": f"Bearer {token}"}
-    )
-    assert resp.status_code == 404
-
-
-def test_catalog_requires_auth(api_client):
-    client, _ = api_client
-    resp = client.get("/v1/catalog")
-    assert resp.status_code == 401
-
-
 def test_healthz(api_client):
     client, _ = api_client
     resp = client.get("/healthz")
@@ -98,89 +62,6 @@ def test_quote_manual_factor_no_approval_gate(api_client, sample_form):
     body = resp.json()
     assert set(body["files"].keys()) == {"pdf", "xlsx", "json"}
 
-
-def test_new_quotes_renders_without_approval(api_client, sample_form):
-    """Resource-oriented: POST /v1/quotes always state=not_required, render OK."""
-    client, token = api_client
-    sample_form["成交价系数"] = 0.25
-    sample_form["人工改价原因"] = "总部战略客户"
-    auth = {"Authorization": f"Bearer {token}"}
-
-    r = client.post("/v1/quotes", json=sample_form, headers=auth)
-    assert r.status_code == 200, r.text
-    body = r.json()
-    qid = body["quote_id"]
-    assert body["approval"]["state"] == "not_required"
-    assert body["approval"]["required"] is False
-
-    rendered = client.post(f"/v1/quotes/{qid}/render/pdf", headers=auth)
-    assert rendered.status_code == 200
-    assert rendered.json()["filename"].endswith(".pdf")
-
-
-def test_quote_explain_returns_cost_and_margin(api_client, sample_form):
-    client, token = api_client
-    auth = {"Authorization": f"Bearer {token}"}
-    created = client.post("/v1/quotes", json=sample_form, headers=auth)
-    assert created.status_code == 200
-    qid = created.json()["quote_id"]
-
-    explain = client.post(f"/v1/quotes/{qid}/explain", headers=auth)
-    assert explain.status_code == 200
-    body = explain.json()
-    assert body["quote_id"] == qid
-    assert len(body["items"]) >= 1
-    # explain surfaces internal cost/margin fields
-    item = body["items"][0]
-    assert "cost_unit_price" in item
-    assert "margin_pct" in item
-
-
-def test_quote_get_after_create(api_client, sample_form):
-    client, token = api_client
-    auth = {"Authorization": f"Bearer {token}"}
-    created = client.post("/v1/quotes", json=sample_form, headers=auth)
-    qid = created.json()["quote_id"]
-
-    fetched = client.get(f"/v1/quotes/{qid}", headers=auth)
-    assert fetched.status_code == 200
-    body = fetched.json()
-    assert body["quote_id"] == qid
-    assert body["preview"]["stores"] == sample_form["门店数量"]
-
-
-def test_quotes_idempotency_key_header_dedups(api_client, sample_form):
-    """Two POSTs with same Idempotency-Key + same form = one quote."""
-    import sqlite3
-    client, token = api_client
-    auth = {"Authorization": f"Bearer {token}", "Idempotency-Key": "client-uuid-abc"}
-    r1 = client.post("/v1/quotes", json=sample_form, headers=auth)
-    r2 = client.post("/v1/quotes", json=sample_form, headers=auth)
-    assert r1.json()["quote_id"] == r2.json()["quote_id"]
-
-
-def test_quotes_idempotency_key_replay_with_different_form_rejected(api_client, sample_form):
-    """Same key + different form = 400 (client bug)."""
-    client, token = api_client
-    auth = {"Authorization": f"Bearer {token}", "Idempotency-Key": "client-uuid-xyz"}
-    r1 = client.post("/v1/quotes", json=sample_form, headers=auth)
-    assert r1.status_code == 200
-
-    different = dict(sample_form)
-    different["门店数量"] = 7
-    r2 = client.post("/v1/quotes", json=different, headers=auth)
-    assert r2.status_code == 400
-    assert r2.json()["error"]["field"] == "Idempotency-Key"
-
-
-def test_quote_get_cross_org_is_404(api_client, sample_form):
-    """Quotes are org-scoped: another org's id returns 404."""
-    client, token = api_client
-    auth = {"Authorization": f"Bearer {token}"}
-    client.post("/v1/quotes", json=sample_form, headers=auth)
-
-    resp = client.get("/v1/quotes/q_nonexistent_0000", headers=auth)
-    assert resp.status_code == 404
 
 def test_quote_401_missing_token(api_client, sample_form):
     client, _ = api_client
@@ -255,24 +136,6 @@ def test_quote_56_stores_effective_store_count_is_50(api_client, sample_form):
     body = resp.json()
     # preview 主报价应该按 50 店算(下锚点 tier_window[0])
     assert body["preview"]["stores"] == 50
-
-
-def test_quote_explain_surfaces_tier_window_for_large_segment(api_client, sample_form):
-    """56 店 → pricing_info 里有 effective_store_count 和 original_requested_store_count。"""
-    client, token = api_client
-    sample_form["门店数量"] = 150
-    auth = {"Authorization": f"Bearer {token}"}
-    created = client.post("/v1/quotes", json=sample_form, headers=auth)
-    assert created.status_code == 200, created.text
-    qid = created.json()["quote_id"]
-
-    explain = client.post(f"/v1/quotes/{qid}/explain", headers=auth)
-    assert explain.status_code == 200
-    pi = explain.json()["pricing_info"]
-    assert pi["route_strategy"] == "large-segment"
-    assert pi["original_requested_store_count"] == 150
-    assert pi["effective_store_count"] == 100  # tier_window[0] for 150
-    assert pi["algorithm_version"] == "large-segment-v1"
 
 
 def test_quote_200_stores_effective_is_200(api_client, sample_form):

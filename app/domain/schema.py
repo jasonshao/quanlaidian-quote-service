@@ -63,61 +63,6 @@ class QuoteResponse(BaseModel):
     pricing_version: str
 
 
-class ApprovalState(BaseModel):
-    required: bool
-    state: str  # not_required | pending | approved | rejected
-    reasons: list[str] = Field(default_factory=list)
-    decided_by: Optional[str] = None
-    decision_reason: Optional[str] = None
-    decided_at: Optional[str] = None
-
-
-class QuoteCreated(BaseModel):
-    """Response of POST /v1/quotes — pricing only, no files."""
-    request_id: str
-    quote_id: str
-    preview: QuotePreview
-    approval: ApprovalState
-    pricing_version: str
-
-
-class QuoteDetail(BaseModel):
-    """Response of GET /v1/quotes/{id}."""
-    quote_id: str
-    org: str
-    preview: QuotePreview
-    approval: ApprovalState
-    renders: dict[str, FileRef] = Field(default_factory=dict)
-    pricing_version: str
-    created_at: str
-
-
-class QuoteItemBreakdown(BaseModel):
-    name: str
-    category: str
-    module_category: str
-    unit: str
-    qty: int
-    list_price: int
-    unit_price: int
-    subtotal: int
-    cost_unit_price: int
-    cost_subtotal: int
-    profit: int
-    margin_pct: float
-    protected: bool
-    factor: float
-
-
-class QuoteExplain(BaseModel):
-    """Response of POST /v1/quotes/{id}/explain — per-item cost/profit breakdown."""
-    quote_id: str
-    items: list[QuoteItemBreakdown]
-    totals: QuoteTotals
-    pricing_info: dict
-    internal_financials: dict
-
-
 class ErrorDetail(BaseModel):
     code: str
     field: Optional[str] = None

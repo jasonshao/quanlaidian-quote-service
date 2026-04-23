@@ -38,28 +38,23 @@ python -m app.cli revoke-token --id tok_xxxx   # 吊销
 python -m app.cli migrate-tokens-json          # 一次性：把旧 data/tokens.json 迁入 api_token 表
 ```
 
-### 幂等（Idempotency-Key）
-
-`POST /v1/quotes` 支持可选的 `Idempotency-Key` 请求头。相同 key + 相同 form → 返回同一 `quote_id`，供客户端做重试安全；相同 key + 不同 form → `400 OUT_OF_RANGE`（客户端 bug，key 被复用）。不显式提供 key 时，服务端以 `(org, form 规范化哈希)` 去重，同组织重复提交同 form 仍然幂等。
-
-响应头会回显 `X-Quote-ID` 和 `Idempotency-Key`。
-
 ---
 
-## 报价资源接口（推荐）
+## 业务接口
 
-### POST /v1/quotes — 算价+持久化
+### POST /v1/quote — 算价 + 渲染 PDF/XLSX/JSON
 
-只跑定价算法并写入 `quote` 表，**不生成文件**。用于预览、需要审批前置、或客户端希望按需生成文件的场景。
+唯一对外的报价接口。一次调用里完成：定价 → 持久化 → 生成 PDF/XLSX/JSON 三份文件，返回 preview + 三个下载链接。
+
+同 `(org, 规范化 form)` 幂等：重复提交同一份表单，服务端返回同一 `quote_id`，不会产生重复 DB 行。
 
 **请求体：** 参见下方 [QuoteForm 字段表](#quoteform-字段)。
 
-**响应 — HTTP 200：**
+**响应片段 — HTTP 200：**
 
 ```json
 {
-  "request_id": "req_20260419165249_649f6de0",
-  "quote_id": "q_20260419165249_649f6de0",
+  "request_id": "req_…",
   "pricing_version": "small-segment-v2.3",
   "preview": {
     "brand": "海底捞火锅",
@@ -70,143 +65,17 @@ python -m app.cli migrate-tokens-json          # 一次性：把旧 data/tokens.
     "totals": { "list": 478920, "final": 115119 },
     "items": [ /* … */ ]
   },
-  "approval": {
-    "required": false,
-    "state": "not_required",
-    "reasons": [],
-    "decided_by": null,
-    "decision_reason": null,
-    "decided_at": null
-  }
-}
-```
-
-### GET /v1/quotes/{quote_id} — 读回已持久化的报价
-
-包含 preview、approval 状态和已生成的文件列表。
-
-**响应片段：**
-
-```json
-{
-  "quote_id": "q_…",
-  "org": "acme-sales",
-  "preview": { /* 同上 */ },
-  "approval": { /* 同上 */ },
-  "renders": {
-    "pdf": { "url": "…", "filename": "…", "expires_at": "…" },
-    "xlsx": { "url": "…", "filename": "…", "expires_at": "…" }
-  },
-  "pricing_version": "small-segment-v2.3",
-  "created_at": "2026-04-19T16:52:49.996645+00:00"
-}
-```
-
-### POST /v1/quotes/{quote_id}/render/{format} — 按需渲染
-
-`format ∈ {pdf, xlsx, json}`。首次调用生成文件，之后调用复用上次的 URL；带 `?force=1` 强制重新渲染。
-
-**响应 — HTTP 200：**
-
-```json
-{
-  "url": "https://api.quanlaidian.com/files/<file_token>/海底捞火锅-全来店-报价单-20260420.pdf",
-  "filename": "海底捞火锅-全来店-报价单-20260420.pdf",
-  "expires_at": "2026-04-26T16:53:08Z"
-}
-```
-
-### POST /v1/quotes/{quote_id}/explain — 成本/利润明细
-
-内部口径接口 — 返回每个商品的底价、利润、毛利率。**谨慎向客户透出**。
-
-**响应 — HTTP 200：**
-
-```json
-{
-  "quote_id": "q_…",
-  "items": [
-    {
-      "name": "正餐连锁营销旗舰版",
-      "category": "标准软件套餐",
-      "module_category": "门店软件套餐",
-      "list_price": 15120,
-      "unit_price": 2872.80,
-      "qty": 30,
-      "subtotal": 86184.00,
-      "cost_unit_price": 756.00,
-      "cost_subtotal": 22680.00,
-      "profit": 63504.00,
-      "margin_pct": 73.7,
-      "protected": false,
-      "factor": 0.19
-    }
-  ],
-  "totals": { "list": 478920, "final": 115119 },
-  "pricing_info": { /* 完整定价元数据 */ },
-  "internal_financials": { "quote_total": 115119, "cost_total": 29876, "profit_total": 85243, "profit_rate": 74.05 }
-}
-```
-
-### POST /v1/quotes/{quote_id}/approvals/decide — 审批决策
-
-当 `approval.required` 为 true 时需要主管决策。
-
-**请求体：**
-
-```json
-{
-  "decision": "approve",
-  "reason": "VIP 客户 CEO 特批",
-  "approver": "总监王五"
-}
-```
-
-`decision` 必须是 `"approve"` 或 `"reject"`。决策后 `render` 端点放行（approve）或继续返回 `409`（reject，终态）。
-
----
-
-## 其他接口
-
-### GET /v1/catalog
-
-获取产品目录 JSON。可选 query：`meal_type=轻餐|正餐`。
-
-**响应：**
-
-```json
-{
-  "pricing_version": "small-segment-v2.3",
-  "meal_type": "正餐",
-  "items": [
-    { "meal_type": "正餐", "group": "门店套餐", "name": "正餐连锁营销旗舰版", "unit": "店/年", "price": 15900 }
-  ]
-}
-```
-
-skill 端推荐启动时从这里拉，**不要**自己维护一份 `product_catalog.md` 副本 — 避免服务端调价与客户端预览漂移。
-
-### POST /v1/quote — Legacy 单次报价（保留兼容 UAT 客户端）
-
-一次调用里完成 算价+持久化+PDF+XLSX+JSON 渲染，返回 `QuoteResponse`。
-
-- 客户端无论是否显式传 `成交价系数`，都会直接出报价和文件，系统不再设审批卡点。`approval.state` 永远为 `not_required`。
-- 仍然支持 `Idempotency-Key`。
-
-**响应片段：**
-
-```json
-{
-  "request_id": "req_…",
-  "pricing_version": "small-segment-v2.3",
-  "preview": { /* … */ },
   "files": {
-    "pdf": { "url": "…", "filename": "…", "expires_at": "…" },
+    "pdf":  { "url": "…", "filename": "…", "expires_at": "…" },
     "xlsx": { "url": "…", "filename": "…", "expires_at": "…" },
     "json": { "url": "…", "filename": "…", "expires_at": "…" }
   }
 }
 ```
+
+---
+
+## 运维接口
 
 ### GET /healthz
 
@@ -218,13 +87,13 @@ skill 端推荐启动时从这里拉，**不要**自己维护一份 `product_cat
 
 ### GET /files/{token}/{filename}
 
-按 token 限定的 URL 下载已生成的文件。生产环境由 nginx 直接从磁盘提供（`alias data/files/`），此路由仅作为开发环境兜底。
+按 token 限定的 URL 下载已生成的文件。生产环境由 nginx 直接从磁盘提供（`alias data/files/`），此路由仅作为开发环境兜底。不是销售/客户端直接调用的接口，通常由 `POST /v1/quote` 响应里的 `files[*].url` 引导访问。
 
 ---
 
 ## QuoteForm 字段
 
-所有报价接口（`POST /v1/quotes` 和 legacy `POST /v1/quote`）共用：
+`POST /v1/quote` 请求体字段：
 
 | 字段 | 类型 | 必填 | 约束 | 说明 |
 |---|---|---|---|---|
@@ -263,9 +132,8 @@ skill 端推荐启动时从这里拉，**不要**自己维护一份 `product_cat
 | HTTP | `code` | 触发原因 |
 |---|---|---|
 | 401 | — | 缺失或错误的 Bearer token |
-| 404 | `NOT_FOUND` | quote 不存在或不属于当前 org |
 | 422 | `INVALID_FORM` | 请求体不符合 schema（缺必填字段、值越界等）|
-| 400 | `OUT_OF_RANGE` | 业务规则越界（缺人工改价原因、Idempotency-Key 冲突等）|
+| 400 | `OUT_OF_RANGE` | 业务规则越界（如提供 `成交价系数` 但缺 `人工改价原因`）|
 | 500 | `PRICING_FAILED` | 定价算法错误（如基线或产品目录缺失）|
 | 500 | `RENDER_FAILED` | PDF 或 XLSX 生成错误 |
 | 500 | `INTERNAL_ERROR` | 未预期的服务端错误 |
@@ -293,7 +161,7 @@ export QUOTE_API_URL=https://<your-api-host>
 - 自动升级后定价算法被破坏（依赖 / 基线 / 算法版本漂移）
 - 安全暴露：定价 key 和凭据散落在所有客户端
 
-本服务是该重构的服务端那一半。所有敏感逻辑收归服务端：定价算法、价格基线（运行时 XOR+SHA256 混淆解码，明文不落盘）、PDF/XLSX 生成、文件存储、SQLite 持久化、审计日志、审批工作流。
+本服务是该重构的服务端那一半。所有敏感逻辑收归服务端：定价算法、价格基线（运行时 XOR+SHA256 混淆解码，明文不落盘）、PDF/XLSX 生成、文件存储、SQLite 持久化、审计日志。
 
 ---
 
@@ -312,16 +180,14 @@ quanlaidian-quote-service/
 │   ├── storage.py                     # LocalDiskStorage（返回 file_token）
 │   ├── cli.py                         # Token 管理 CLI
 │   ├── api/
-│   │   ├── quote.py                   # POST /v1/quote (legacy)
-│   │   ├── quotes.py                  # /v1/quotes/* 资源端点
-│   │   ├── catalog.py                 # GET /v1/catalog
+│   │   ├── quote.py                   # POST /v1/quote
 │   │   ├── files.py                   # GET /files/{token}/{filename}
 │   │   └── health.py                  # GET /healthz
 │   ├── domain/
 │   │   ├── schema.py                  # Pydantic 请求/响应模型
 │   │   ├── pricing.py                 # 定价算法（small-segment-v2.3）
 │   │   ├── pricing_baseline.py        # .obf 运行时解码 + 明文回退
-│   │   ├── quote_service.py           # 算价/渲染/审批业务逻辑（legacy + 资源端点共享）
+│   │   ├── quote_service.py           # 算价/渲染业务逻辑
 │   │   ├── render_pdf.py              # reportlab PDF
 │   │   └── render_xlsx.py             # openpyxl XLSX
 │   └── persistence/                   # SQLite 持久层（B0）
@@ -342,7 +208,7 @@ quanlaidian-quote-service/
 ├── tests/                             # 所有测试全绿
 │   ├── conftest.py
 │   ├── fixtures/
-│   ├── test_api.py                    # 端点集成测试（含新资源端点）
+│   ├── test_api.py                    # 端点集成测试
 │   ├── test_persistence.py            # SQLite 单元测试
 │   ├── test_pricing.py
 │   ├── test_render.py
@@ -389,29 +255,21 @@ Pydantic `BaseSettings` 从环境变量读取配置：
 
 #### `app/domain/quote_service.py` — 业务逻辑层
 
-`price_and_persist`、`render_format`、`build_preview`、`build_breakdown`、`approval_to_state` 等函数。legacy `/v1/quote` 端点和资源端点共享同一套业务函数，保证行为一致。
+`price_and_persist`、`render_format`、`build_preview`、`render_to_file_ref` 等函数。`POST /v1/quote` 端点由这些函数组合而成。
 
 #### `app/persistence/` — SQLite 持久层
 
 三张表：
 
-- `quote`：每次定价一行（按 `org + form_hash` 去重，可选 `idempotency_key`）
+- `quote`：每次定价一行（按 `org + form_hash` 去重）
 - `quote_render`：每次文件生成一行
-- `approval`：每个 quote ≤ 1 行，状态机 `not_required → pending → approved | rejected`
+- `approval`：每个 quote ≤ 1 行，固定 `state = not_required`（审批流 2026-04-20 业务下线后，此表保留只为审计留痕）
 
 `CREATE TABLE IF NOT EXISTS` 方式在 FastAPI lifespan 启动时初始化。UAT 阶段未用 Alembic。
 
-#### `app/api/quotes.py` — 资源端点路由
+#### `app/api/quote.py` — 业务端点
 
-五个资源端点：创建、读取、按需渲染、明细、审批决策。审批未通过时 render 返回 409。
-
-#### `app/api/quote.py` — Legacy 端点
-
-`POST /v1/quote` 仍在，但现在只是 compound call：`price_and_persist → render(pdf) → render(xlsx) → render(json) → QuoteResponse`。遇审批需要直接 409，鼓励客户端切到资源接口。
-
-#### `app/api/catalog.py` — 产品目录端点
-
-`GET /v1/catalog` 暴露 `product_catalog.md` 的解析结果，作为 skill 端的单一真实源。
+`POST /v1/quote` — 服务对外暴露的唯一业务端点。内部是一次 compound call：`price_and_persist → render(pdf) → render(xlsx) → render(json) → QuoteResponse`。
 
 #### `app/auth.py` + `app/cli.py` — Token
 
@@ -425,30 +283,20 @@ Pydantic `BaseSettings` 从环境变量读取配置：
 
 ### 请求流水线
 
-**资源化新路径**（推荐）：
-
 ```
 OpenClaw agent
     │
-    │ POST /v1/quotes  {QuoteForm}         → 算价，写入 quote + approval 表
-    │ GET  /v1/quotes/{id}                 → 读回
-    │ POST /v1/quotes/{id}/approvals/decide → 主管审批（如需要）
-    │ POST /v1/quotes/{id}/render/{format}  → 按需渲染
+    │ POST /v1/quote  {QuoteForm}
     │
     ▼
-FastAPI → auth → schema → quote_service → pricing → render → storage → audit
+FastAPI → auth → schema → quote_service → pricing → render(pdf/xlsx/json) → storage → audit
                                               │
                                               ▼
                                        SQLite data/quote.db
                                        (quote / quote_render / approval)
 ```
 
-**Legacy 路径**（向下兼容）：
-
-```
-POST /v1/quote → price_and_persist → render(pdf) + render(xlsx) + render(json)
-               → 200 QuoteResponse (3 个文件 URL)
-```
+响应 `QuoteResponse` 含 preview + 3 个文件 URL（pdf/xlsx/json），URL 由 `storage` 发放，带 7 天 TTL，到期由 cron 清理。
 
 ---
 

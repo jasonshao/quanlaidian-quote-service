@@ -74,8 +74,6 @@ def api_client(test_data_root, test_token, monkeypatch):
     # Patch the global settings object in all modules that imported it
     monkeypatch.setattr(config_module, "settings", new_settings)
     monkeypatch.setattr("app.api.quote.settings", new_settings)
-    monkeypatch.setattr("app.api.quotes.settings", new_settings, raising=False)
-    monkeypatch.setattr("app.api.catalog.settings", new_settings, raising=False)
     monkeypatch.setattr("app.api.health.settings", new_settings, raising=False)
 
     # Override product catalog path lookup when running on a workstation that
