@@ -2,7 +2,7 @@
 
 > [中文版 →](README.md)
 
-Server-side quotation service for the Quanlaidian product line. Owns the pricing algorithm, baseline data, PDF/XLSX rendering, file storage, audit logging, and approval workflow — turning every client into a thin HTTP wrapper.
+Server-side quotation service for the Quanlaidian product line. Owns the pricing algorithm, baseline data, PDF/XLSX rendering, file storage, and audit logging — turning every client into a thin HTTP wrapper.
 
 **Version:** 1.0.0　**Runtime:** Python 3.10+ · FastAPI · uvicorn · SQLite
 
@@ -161,7 +161,7 @@ The original quotation system was a "fat skill" distributed to every user's Open
 - Pricing algorithm breakage after auto-updates (dependency / baseline / algorithm version drift)
 - Security exposure: pricing keys and credentials on every client machine
 
-This service owns all sensitive logic server-side: the pricing algorithm, the pricing baseline (runtime XOR+SHA256 decoded — plaintext never touches disk), PDF/XLSX generation, file storage, SQLite persistence, audit logging, and approval workflow.
+This service owns all sensitive logic server-side: the pricing algorithm, the pricing baseline (runtime XOR+SHA256 decoded — plaintext never touches disk), PDF/XLSX generation, file storage, SQLite persistence, and audit logging.
 
 ---
 
@@ -277,7 +277,7 @@ Schema is created via `CREATE TABLE IF NOT EXISTS` in the FastAPI lifespan start
 
 #### `app/audit.py` — Audit Logging
 
-Each successful quote request and approval decision appends one JSON line to `data/audit/YYYY-MM-DD.jsonl`. Fields include `ts`, `request_id`, `quote_id`, `org`, `brand`, `stores`, `package`, `discount`, `final`, `pricing_version`, `status`, `duration_ms`.
+Each successful quote request appends one JSON line to `data/audit/YYYY-MM-DD.jsonl`. Fields include `ts`, `request_id`, `quote_id`, `org`, `token_id`, `brand`, `stores`, `package`, `discount`, `final`, `pricing_version`, `status`, `duration_ms`.
 
 ---
 

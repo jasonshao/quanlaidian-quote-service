@@ -2,7 +2,7 @@
 
 > [English version →](README.en.md)
 
-全来店产品线的服务端报价系统：独占定价算法、价格基线、PDF/XLSX 渲染、文件存储、审计日志和审批工作流，把客户端缩成一段 HTTP 包装。
+全来店产品线的服务端报价系统：独占定价算法、价格基线、PDF/XLSX 渲染、文件存储和审计日志，把客户端缩成一段 HTTP 包装。
 
 **版本：** 1.0.0　**运行环境：** Python 3.10+ · FastAPI · uvicorn · SQLite
 
@@ -277,7 +277,7 @@ Pydantic `BaseSettings` 从环境变量读取配置：
 
 #### `app/audit.py` — 审计日志
 
-每条成功的报价请求、审批决策追加一行 JSON 到 `data/audit/YYYY-MM-DD.jsonl`。字段：`ts`、`request_id`、`quote_id`、`org`、`brand`、`stores`、`package`、`discount`、`final`、`pricing_version`、`status`、`duration_ms`。
+每条成功的报价请求追加一行 JSON 到 `data/audit/YYYY-MM-DD.jsonl`。字段：`ts`、`request_id`、`quote_id`、`org`、`token_id`、`brand`、`stores`、`package`、`discount`、`final`、`pricing_version`、`status`、`duration_ms`。
 
 ---
 
