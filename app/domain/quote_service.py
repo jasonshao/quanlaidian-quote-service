@@ -8,6 +8,7 @@ from typing import Optional
 
 from app.domain.pricing import build_quotation_config
 from app.domain.pricing_baseline import load_baseline, pricing_version
+from app.domain.product_descriptions import load_descriptions
 from app.domain.render_pdf import render_pdf
 from app.domain.render_xlsx import render_xlsx
 from app.domain.schema import (
@@ -47,6 +48,7 @@ def price_and_persist(
     db_path: Path,
     baseline: dict,
     product_catalog_path: Path,
+    product_descriptions_path: Optional[Path] = None,
     idempotency_key: Optional[str] = None,
 ) -> tuple[Quote, Approval, dict]:
     """Price the form, persist quote + approval rows, return (quote, approval, config_dict).
@@ -55,8 +57,9 @@ def price_and_persist(
     it takes precedence — replaying the same key must use the same form or we
     raise ValueError (client bug).
     """
+    descriptions = load_descriptions(product_descriptions_path)
     try:
-        config = build_quotation_config(form, baseline, product_catalog_path)
+        config = build_quotation_config(form, baseline, product_catalog_path, descriptions=descriptions)
     except ValueError as e:
         msg = str(e)
         field = "人工改价原因" if "人工改价" in msg else None

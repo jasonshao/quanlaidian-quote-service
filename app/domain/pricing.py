@@ -702,7 +702,7 @@ def _compute_quote_unit_price(module_category, standard_price, cost_price, deal_
     return round_money(cost_price)
 
 
-def build_quote_item(product, standard_price, cost_price, quantity, deal_price_factor, category, module_category):
+def build_quote_item(product, standard_price, cost_price, quantity, deal_price_factor, category, module_category, description="", sub_items=None):
     protected = is_protected_product(product["name"])
     quote_unit_price = _compute_quote_unit_price(
         module_category=module_category,
@@ -739,6 +739,8 @@ def build_quote_item(product, standard_price, cost_price, quantity, deal_price_f
         "成本小计": cost_subtotal,
         "利润": profit,
         "利润率": margin,
+        "功能说明": description,
+        "子项": list(sub_items) if sub_items else [],
     }
 
 
@@ -855,7 +857,13 @@ def build_approval_decision(
     return {"approval_required": False, "approval_reason": []}
 
 
-def build_quotation_config(form: dict, baseline: dict, product_catalog_path: Path, quote_date=None) -> dict:
+def build_quotation_config(form: dict, baseline: dict, product_catalog_path: Path, quote_date=None, descriptions: dict | None = None) -> dict:
+    from app.domain.product_descriptions import (
+        get_annotation_block,
+        get_description,
+        get_package_contents,
+    )
+
     products = load_product_catalog(product_catalog_path)
     baseline_index = build_pricing_baseline_index(baseline)
     product_index = build_product_index(products)
@@ -938,15 +946,26 @@ def build_quotation_config(form: dict, baseline: dict, product_catalog_path: Pat
     quote_date = quote_date or datetime.now().strftime("%Y年%m月%d日")
     items = []
 
+    def _desc_for(product):
+        return get_description(descriptions, product.get("meal_type", meal_type), product["name"])
+
     package = lookup_product(product_index, form["门店套餐"], meal_type=meal_type, group="门店套餐")
     package_standard_price, package_cost_price, _ = resolve_product_pricing(package, meal_type, baseline_index)
-    items.append(build_quote_item(package, package_standard_price, package_cost_price, store_count, deal_price_factor, "标准软件套餐", "门店软件套餐"))
+    package_subs = get_package_contents(descriptions, package.get("meal_type", meal_type), package["name"])
+    # When sub-rows carry their own 功能说明, clear the package's combined
+    # description so the parent row stays uncluttered.
+    package_desc = "" if package_subs else _desc_for(package)
+    items.append(build_quote_item(
+        package, package_standard_price, package_cost_price, store_count, deal_price_factor,
+        "标准软件套餐", "门店软件套餐",
+        description=package_desc, sub_items=package_subs,
+    ))
 
     for module_name in form.get("门店增值模块", []):
         module = lookup_product(product_index, module_name, meal_type=meal_type, group="门店增值模块")
         category = "保护类商品" if is_protected_product(module["name"]) else "增值模块"
         standard_price, cost_price, _ = resolve_product_pricing(module, meal_type, baseline_index)
-        items.append(build_quote_item(module, standard_price, cost_price, store_count, deal_price_factor, category, "门店增值模块"))
+        items.append(build_quote_item(module, standard_price, cost_price, store_count, deal_price_factor, category, "门店增值模块", description=_desc_for(module)))
 
     for module_name in form.get("总部模块", []):
         quantity_field = {
@@ -959,14 +978,14 @@ def build_quotation_config(form: dict, baseline: dict, product_catalog_path: Pat
         module = lookup_product(product_index, module_name, meal_type=meal_type, group="总部模块")
         category = "保护类商品" if is_protected_product(module["name"]) else "总部模块"
         standard_price, cost_price, _ = resolve_product_pricing(module, meal_type, baseline_index)
-        items.append(build_quote_item(module, standard_price, cost_price, quantity, deal_price_factor, category, "总部模块"))
+        items.append(build_quote_item(module, standard_price, cost_price, quantity, deal_price_factor, category, "总部模块", description=_desc_for(module)))
 
     implementation_type = form.get("实施服务类型")
     implementation_days = int(form.get("实施服务人天", 0) or 0)
     if implementation_type and implementation_days > 0:
         service = lookup_product(product_index, implementation_type, group="实施服务")
         standard_price, cost_price, _ = resolve_product_pricing(service, meal_type, baseline_index)
-        items.append(build_quote_item(service, standard_price, cost_price, implementation_days, 1.0, "实施服务", "实施服务"))
+        items.append(build_quote_item(service, standard_price, cost_price, implementation_days, 1.0, "实施服务", "实施服务", description=_desc_for(service)))
 
     protected_bypass_count = sum(1 for item in items if item.get("protected_item_bypass"))
     if protected_bypass_count > 0:
@@ -1042,6 +1061,10 @@ def build_quotation_config(form: dict, baseline: dict, product_catalog_path: Pat
             },
         },
     }
+
+    annotation = get_annotation_block(descriptions, "权益类自助充值模块")
+    if annotation:
+        config["附加说明"] = [annotation]
 
     tiers = build_tier_config(form.get("是否启用阶梯报价"), meal_type, requested_store_count)
     if tiers:

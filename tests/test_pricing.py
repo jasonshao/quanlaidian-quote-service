@@ -388,3 +388,80 @@ def test_module_unit_price_follows_markup_rule(empty_baseline):
             f"{item['商品名称']} ({cat}): unit {item['商品单价']} != "
             f"cost {item['成本单价']} × {expected_markup[cat]}"
         )
+
+
+# ============================================================
+# 功能说明 & 附加说明 (new feature)
+# ============================================================
+REPO_ROOT = Path(__file__).resolve().parent.parent
+LOCAL_CATALOG = REPO_ROOT / "references" / "product_catalog.md"
+LOCAL_DESCRIPTIONS = REPO_ROOT / "references" / "product_descriptions.json"
+
+
+def _load_descriptions():
+    from app.domain.product_descriptions import load_descriptions
+    return load_descriptions(LOCAL_DESCRIPTIONS)
+
+
+def test_build_quote_item_includes_description_field():
+    from app.domain.pricing import build_quote_item
+    product = {"name": "X", "unit": "店/年", "meal_type": "轻餐", "group": "门店增值模块"}
+    item = build_quote_item(product, 100, 50, 1, 1.0, "增值模块", "门店增值模块", description="hello")
+    assert item["功能说明"] == "hello"
+
+
+def test_build_quote_item_description_defaults_to_empty():
+    from app.domain.pricing import build_quote_item
+    product = {"name": "X", "unit": "店/年", "meal_type": "轻餐", "group": "门店增值模块"}
+    item = build_quote_item(product, 100, 50, 1, 1.0, "增值模块", "门店增值模块")
+    assert item["功能说明"] == ""
+
+
+def test_build_quotation_config_attaches_descriptions(empty_baseline):
+    form = _load_form("form_light_meal_5_stores.json")
+    desc = _load_descriptions()
+    config = build_quotation_config(form, empty_baseline, LOCAL_CATALOG, descriptions=desc)
+    # Every line item should carry a 功能说明 key (possibly empty, but present).
+    for item in config["报价项目"]:
+        assert "功能说明" in item
+    # The package row has sub-rows (子项), so its own 功能说明 is cleared and
+    # each sub-row carries the individual module description instead.
+    first = config["报价项目"][0]
+    if first["子项"]:
+        assert first["功能说明"] == ""
+        for sub in first["子项"]:
+            assert sub.get("功能说明"), f"sub-row {sub.get('商品名称')} missing 功能说明"
+    else:
+        assert first["功能说明"], f"expected non-empty 功能说明 for {first['商品名称']}"
+
+
+def test_build_quotation_config_expands_package_into_sub_items(empty_baseline):
+    form = _load_form("form_light_meal_5_stores.json")
+    desc = _load_descriptions()
+    config = build_quotation_config(form, empty_baseline, LOCAL_CATALOG, descriptions=desc)
+    package_item = config["报价项目"][0]
+    assert package_item["模块分类"] == "门店软件套餐"
+    assert len(package_item["子项"]) >= 3  # 轻餐标准/基础版 includes 3~4 modules
+    names = {sub["商品名称"] for sub in package_item["子项"]}
+    assert any("点餐收银" in n or "商户中心" in n for n in names)
+
+
+def test_build_quotation_config_attaches_annotation(empty_baseline):
+    form = _load_form("form_light_meal_5_stores.json")
+    desc = _load_descriptions()
+    config = build_quotation_config(form, empty_baseline, LOCAL_CATALOG, descriptions=desc)
+    assert "附加说明" in config
+    blocks = config["附加说明"]
+    assert any(b and b.get("title") == "权益类自助充值模块" for b in blocks)
+    block = next(b for b in blocks if b.get("title") == "权益类自助充值模块")
+    joined = "\n".join(block["text_lines"])
+    assert "0.039" in joined and "0.032" in joined and "0.021" in joined
+
+
+def test_build_quotation_config_without_descriptions_skips_annotation(empty_baseline):
+    form = _load_form("form_light_meal_5_stores.json")
+    config = build_quotation_config(form, empty_baseline, LOCAL_CATALOG)
+    assert "附加说明" not in config
+    for item in config["报价项目"]:
+        assert item["功能说明"] == ""
+        assert item["子项"] == []

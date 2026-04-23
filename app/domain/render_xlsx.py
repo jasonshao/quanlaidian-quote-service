@@ -36,7 +36,7 @@ from app.domain.render_pdf import (
 # Caller MUST leave row 1 free (content starts from row 2).
 # ============================================================
 _XL_LOGO_HEIGHT_PX = 26       # ~7mm at 96 DPI, matches PDF logo size
-_XL_LOGO_GAP_PX = 8            # ~3mm horizontal gap between the two logos
+_XL_LOGO_GAP_PX = 12           # ~4mm horizontal gap between the two logos
 _XL_LOGO_ROW_HEIGHT_PT = 26    # ~35px row height, leaves ~9px padding
 _XL_LOGO_LEFT_OFFSET_PX = 4    # small left inset inside column A
 
@@ -46,10 +46,24 @@ def _xl_add_header_logos(ws):
 
     Row 1's height is set to reserve space for the logos. The caller is
     responsible for ensuring no other content lives in row 1.
+
+    Uses AbsoluteAnchor (pixel coordinates relative to the sheet's top-left)
+    so placement is independent of column A's width — a OneCellAnchor with
+    colOff=102px on a sheet where column A is only ~49px wide caused Numbers
+    to collapse both logos onto the same spot on every sheet except the
+    tier-reference sheet (which happens to have a wide column A).
+
+    Logos are pre-resized via PIL before embedding so renderers that ignore
+    the anchor `ext` (e.g. Numbers, Preview) still display them at the right
+    size — the source PNG for 收钱吧 is 2123×641 native, so leaving it
+    unscaled would cause it to cover the second logo.
     """
+    from io import BytesIO
+
+    from PIL import Image as PILImage
     from openpyxl.drawing.image import Image as XLImage
-    from openpyxl.drawing.spreadsheet_drawing import OneCellAnchor, AnchorMarker
-    from openpyxl.drawing.xdr import XDRPositiveSize2D
+    from openpyxl.drawing.spreadsheet_drawing import AbsoluteAnchor
+    from openpyxl.drawing.xdr import XDRPoint2D, XDRPositiveSize2D
     from openpyxl.utils.units import pixels_to_EMU
 
     ws.row_dimensions[1].height = _XL_LOGO_ROW_HEIGHT_PT
@@ -58,27 +72,40 @@ def _xl_add_header_logos(ws):
     for path in (_LOGO_SHOUQIANBA, _LOGO_QUANLAIDIAN):
         if not path.exists():
             continue
-        try:
-            img = XLImage(str(path))
-            aspect = img.width / img.height if img.height else 1.0
-            scaled_h = _XL_LOGO_HEIGHT_PX
-            scaled_w = int(scaled_h * aspect)
-            img.height = scaled_h
-            img.width = scaled_w
 
-            marker = AnchorMarker(
-                col=0, colOff=pixels_to_EMU(x_cursor_px),
-                row=0, rowOff=pixels_to_EMU(2),
+        scaled_w = None
+        try:
+            with PILImage.open(path) as pil:
+                src_w, src_h = pil.size
+                aspect = src_w / src_h if src_h else 1.0
+                scaled_h = _XL_LOGO_HEIGHT_PX
+                scaled_w = max(1, int(round(scaled_h * aspect)))
+                # Downsample the PNG itself so naive viewers (which ignore
+                # the anchor ext) still render at the intended display size.
+                resized = pil.convert("RGBA").resize((scaled_w, scaled_h), PILImage.LANCZOS)
+                buf = BytesIO()
+                resized.save(buf, format="PNG")
+                buf.seek(0)
+
+            img = XLImage(buf)
+            img.width = scaled_w
+            img.height = scaled_h
+
+            pos = XDRPoint2D(
+                x=pixels_to_EMU(x_cursor_px),
+                y=pixels_to_EMU(2),
             )
             ext = XDRPositiveSize2D(
                 cx=pixels_to_EMU(scaled_w),
                 cy=pixels_to_EMU(scaled_h),
             )
-            img.anchor = OneCellAnchor(_from=marker, ext=ext)
+            img.anchor = AbsoluteAnchor(pos=pos, ext=ext)
             ws.add_image(img)
-            x_cursor_px += scaled_w + _XL_LOGO_GAP_PX
         except Exception:
-            pass
+            scaled_w = None
+
+        if scaled_w is not None:
+            x_cursor_px += scaled_w + _XL_LOGO_GAP_PX
 
 
 def _xl_header_style(cell):
@@ -143,7 +170,7 @@ def _xl_apply_border(ws, min_row, min_col, max_row, max_col):
 def _xl_write_item_table(ws, items, start_row, sheet_name='', compute_values=False):
     """
     向 worksheet 写入报价明细表。
-    列：A=序号, B=商品分类, C=商品名称, D=单位, E=数量, F=商品单价, G=小计
+    列：A=序号, B=商品分类, C=商品名称, D=单位, E=数量, F=商品单价, G=小计, H=功能说明
     compute_values=True 时直接写计算后的数值（兼容性更好），
     否则写 Excel 公式（便于手动调整）。
     返回: (最后数据行号, 合计行号)
@@ -151,7 +178,7 @@ def _xl_write_item_table(ws, items, start_row, sheet_name='', compute_values=Fal
     from openpyxl.styles import Font, PatternFill, Alignment
 
     # 表头
-    headers = ['序号', '商品分类', '商品名称', '单位', '数量', '商品单价', '小计']
+    headers = ['序号', '商品分类', '商品名称', '单位', '数量', '商品单价', '小计', '功能说明']
     for col_idx, h in enumerate(headers, 1):
         cell = ws.cell(row=start_row, column=col_idx, value=h)
         _xl_header_style(cell)
@@ -205,8 +232,43 @@ def _xl_write_item_table(ws, items, start_row, sheet_name='', compute_values=Fal
             c = ws.cell(row=current_row, column=7, value=int(subtotal_d))
             _xl_data_style(c, align='right', bg=bg, num_format='#,##0')
 
-        ws.row_dimensions[current_row].height = 18
+        # H: 功能说明 (multi-line wrap)
+        description = item.get('功能说明', '') or ''
+        c = ws.cell(row=current_row, column=8, value=description)
+        _xl_data_style(c, align='left', bg=bg)
+
+        # Row height scales with description line count so wrapped text stays
+        # readable. Packages often have 4–6 bulleted lines; simple modules one.
+        line_count = max(1, description.count('\n') + 1) if description else 1
+        ws.row_dimensions[current_row].height = max(18, 14 * min(line_count, 6))
         current_row += 1
+
+        # ── 子行：门店套餐展开为「商户中心 / 收银系统 / ...」子模块 ──
+        sub_bg = 'F9FAFB'
+        for sub in (item.get('子项') or []):
+            # A: 序号留空
+            c = ws.cell(row=current_row, column=1, value='')
+            _xl_data_style(c, align='center', bg=sub_bg)
+            # B: 商品分类
+            c = ws.cell(row=current_row, column=2, value=sub.get('商品分类', ''))
+            _xl_data_style(c, align='left', bg=sub_bg)
+            # C: 商品名称（以两个全角空格缩进以显示层级）
+            c = ws.cell(row=current_row, column=3, value=f"　　{sub.get('商品名称', '')}")
+            _xl_data_style(c, align='left', bg=sub_bg)
+            # D: 单位
+            c = ws.cell(row=current_row, column=4, value=sub.get('单位', ''))
+            _xl_data_style(c, align='center', bg=sub_bg)
+            # E/F/G: 数量 / 单价 / 小计 均显示 "-"
+            for col in (5, 6, 7):
+                c = ws.cell(row=current_row, column=col, value='-')
+                _xl_data_style(c, align='center', bg=sub_bg)
+            # H: 子模块功能说明
+            sub_desc = sub.get('功能说明', '') or ''
+            c = ws.cell(row=current_row, column=8, value=sub_desc)
+            _xl_data_style(c, align='left', bg=sub_bg)
+            sub_lines = max(1, sub_desc.count('\n') + 1) if sub_desc else 1
+            ws.row_dimensions[current_row].height = max(16, 13 * min(sub_lines, 5))
+            current_row += 1
 
     last_data_row = current_row - 1
 
@@ -226,27 +288,78 @@ def _xl_write_item_table(ws, items, start_row, sheet_name='', compute_values=Fal
     _xl_total_style(c, align='right')
     c.number_format = '#,##0'
 
+    # H: 功能说明 合计行留空
+    _xl_total_style(ws.cell(row=total_row, column=8))
+
     ws.row_dimensions[total_row].height = 20
 
     # 应用边框（含表头）
-    _xl_apply_border(ws, start_row, 1, total_row, 7)
+    _xl_apply_border(ws, start_row, 1, total_row, 8)
 
     return last_data_row, total_row
 
 
+# 8 列标准宽度（明细表基准），各 sheet 视觉宽度以此为准统一。
+_XL_STANDARD_COL_WIDTHS = {
+    'A': 7,   # 序号
+    'B': 16,  # 商品分类
+    'C': 28,  # 商品名称
+    'D': 10,  # 单位
+    'E': 8,   # 数量
+    'F': 14,  # 商品单价
+    'G': 16,  # 小计
+    'H': 42,  # 功能说明
+}
+_XL_STANDARD_TOTAL_WIDTH = sum(_XL_STANDARD_COL_WIDTHS.values())  # 141
+
+
 def _xl_set_col_widths(ws):
     """设置标准列宽"""
-    widths = {
-        'A': 7,   # 序号
-        'B': 16,  # 商品分类
-        'C': 28,  # 商品名称
-        'D': 10,  # 单位
-        'E': 8,   # 数量
-        'F': 14,  # 商品单价
-        'G': 16,  # 小计
-    }
-    for col, width in widths.items():
+    for col, width in _XL_STANDARD_COL_WIDTHS.items():
         ws.column_dimensions[col].width = width
+
+
+def _xl_write_annotation_block(ws, annotation, start_row, end_col_letter='H'):
+    """Write a merged annotation block below the item table.
+
+    Layout:
+      row N:   [title]      —  golden accent header
+      row N+1: [category]   —  subtitle
+      row N+2: * text_line1 —  grey body
+      row N+3: * text_line2
+      ...
+    Returns the next row after the block.
+    """
+    from openpyxl.styles import Font, PatternFill, Alignment
+
+    end_col = {c: i for i, c in enumerate('ABCDEFGHIJKLMN', 1)}[end_col_letter]
+    r = start_row
+
+    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=end_col)
+    c = ws.cell(row=r, column=1, value=annotation.get('title', ''))
+    c.font = Font(name='微软雅黑', bold=True, size=11, color='CC8800')
+    c.fill = PatternFill('solid', fgColor='FFF5D6')
+    c.alignment = Alignment(horizontal='left', vertical='center')
+    ws.row_dimensions[r].height = 22
+    r += 1
+
+    if annotation.get('category'):
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=end_col)
+        c = ws.cell(row=r, column=1, value=annotation['category'])
+        c.font = Font(name='微软雅黑', bold=True, size=10, color='555555')
+        c.alignment = Alignment(horizontal='left', vertical='center')
+        ws.row_dimensions[r].height = 18
+        r += 1
+
+    for line in annotation.get('text_lines') or []:
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=end_col)
+        c = ws.cell(row=r, column=1, value=f'* {line}')
+        c.font = Font(name='微软雅黑', size=9, color='555555')
+        c.alignment = Alignment(horizontal='left', vertical='center', wrap_text=True)
+        ws.row_dimensions[r].height = 32
+        r += 1
+
+    return r
 
 
 # ============================================================
@@ -268,12 +381,12 @@ def _generate_xlsx_standard(data):
     _xl_add_header_logos(ws)
 
     # ── 标题区（行2-3） ──
-    ws.merge_cells('A2:G2')
+    ws.merge_cells('A2:H2')
     c = ws.cell(row=2, column=1, value='"全来店"产品报价单')
     _xl_title_style(c, size=16)
     ws.row_dimensions[2].height = 36
 
-    ws.merge_cells('A3:G3')
+    ws.merge_cells('A3:H3')
     c = ws.cell(row=3, column=1, value='上海收钱吧互联网科技股份有限公司')
     _xl_subtitle_style(c)
     ws.row_dimensions[3].height = 24
@@ -302,7 +415,7 @@ def _generate_xlsx_standard(data):
         _xl_info_value_style(c)
 
         ws.merge_cells(start_row=row_num, start_column=5,
-                       end_row=row_num, end_column=7)
+                       end_row=row_num, end_column=8)
         c = ws.cell(row=row_num, column=5, value=right)
         _xl_info_value_style(c)
         ws.row_dimensions[row_num].height = 18
@@ -318,7 +431,7 @@ def _generate_xlsx_standard(data):
     # ── 金额大写（合计行下方） ──
     notes_row = total_row + 2
     ws.merge_cells(start_row=notes_row, start_column=1,
-                   end_row=notes_row, end_column=7)
+                   end_row=notes_row, end_column=8)
     total_val = Decimal('0')
     for item in items:
         subtotal = get_item_subtotal(item)
@@ -332,6 +445,15 @@ def _generate_xlsx_standard(data):
     c.alignment = Alignment(horizontal='left', vertical='center')
     ws.row_dimensions[notes_row].height = 20
 
+    # ── 权益类自助充值模块 注释区块 ──
+    annotation_cursor = notes_row + 1
+    for annotation in (data.get('附加说明') or []):
+        if not annotation:
+            continue
+        annotation_cursor = _xl_write_annotation_block(
+            ws, annotation, annotation_cursor, end_col_letter='H',
+        )
+
     # ── 备注条款 ──
     terms = data.get('条款', [
         '以上报价金额均为含税金额，税率为6%；',
@@ -341,9 +463,9 @@ def _generate_xlsx_standard(data):
         '如需要三方代仓对接，需要一事一议。',
     ])
 
-    terms_start = notes_row + 1
+    terms_start = annotation_cursor
     ws.merge_cells(start_row=terms_start, start_column=1,
-                   end_row=terms_start, end_column=7)
+                   end_row=terms_start, end_column=8)
     c = ws.cell(row=terms_start, column=1, value='备注：')
     c.font = Font(name='微软雅黑', size=10, bold=True, color='CC8800')
     c.alignment = Alignment(horizontal='left', vertical='center')
@@ -352,7 +474,7 @@ def _generate_xlsx_standard(data):
     cn_nums = '①②③④⑤⑥⑦⑧⑨⑩'
     for i, term in enumerate(terms):
         r = terms_start + 1 + i
-        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=7)
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=8)
         prefix = cn_nums[i] if i < 10 else f'{i+1}.'
         c = ws.cell(row=r, column=1, value=f'{prefix} {term}')
         c.font = Font(name='微软雅黑', size=9, color='555555')
@@ -362,7 +484,7 @@ def _generate_xlsx_standard(data):
     # ── 页脚 ──
     footer_row = terms_start + 1 + len(terms) + 1
     ws.merge_cells(start_row=footer_row, start_column=1,
-                   end_row=footer_row, end_column=7)
+                   end_row=footer_row, end_column=8)
     c = ws.cell(row=footer_row, column=1,
                 value='上海收钱吧互联网科技股份有限公司  |  地址：上海市闵行区浦江智慧广场陈行公路2168号7号楼')
     c.font = Font(name='微软雅黑', size=8, color='888888')
@@ -396,16 +518,16 @@ def _generate_xlsx_custom(data):
     # ── Sheet 1：封面 ──
     ws_cover = wb.create_sheet('封面')
     ws_cover.sheet_view.showGridLines = False
-    ws_cover.column_dimensions['A'].width = 18
-    ws_cover.column_dimensions['B'].width = 30
+    # 与明细表 sheet 统一列宽（8 列 共 141 单位）
+    _xl_set_col_widths(ws_cover)
 
     _xl_add_header_logos(ws_cover)
-    ws_cover.merge_cells('A2:B2')
+    ws_cover.merge_cells('A2:H2')
     c = ws_cover.cell(row=2, column=1, value='"全来店"产品报价方案')
     _xl_title_style(c, size=18)
     ws_cover.row_dimensions[2].height = 44
 
-    ws_cover.merge_cells('A3:B3')
+    ws_cover.merge_cells('A3:H3')
     c = ws_cover.cell(row=3, column=1, value='上海收钱吧互联网科技股份有限公司')
     _xl_subtitle_style(c)
     ws_cover.row_dimensions[3].height = 28
@@ -421,15 +543,18 @@ def _generate_xlsx_custom(data):
         ('有效期',   validity),
     ]
 
+    # 标签占 A:B 两列（23 单位），值跨 C:H 六列（118 单位），整体与明细表等宽。
     for i, (label, value) in enumerate(cover_info):
         r = 5 + i
+        ws_cover.merge_cells(start_row=r, start_column=1, end_row=r, end_column=2)
         c_label = ws_cover.cell(row=r, column=1, value=label)
         _xl_info_label_style(c_label)
-        c_val = ws_cover.cell(row=r, column=2, value=value)
+        ws_cover.merge_cells(start_row=r, start_column=3, end_row=r, end_column=8)
+        c_val = ws_cover.cell(row=r, column=3, value=value)
         _xl_info_value_style(c_val)
         ws_cover.row_dimensions[r].height = 22
 
-    _xl_apply_border(ws_cover, 5, 1, 5 + len(cover_info) - 1, 2)
+    _xl_apply_border(ws_cover, 5, 1, 5 + len(cover_info) - 1, 8)
 
     # 记录封面下一可用行（用于后续追加汇总内容）
     cover_summary_start_row = 5 + len(cover_info) + 2
@@ -480,7 +605,7 @@ def _generate_xlsx_custom(data):
         _xl_set_col_widths(ws_merged)
 
         _xl_add_header_logos(ws_merged)
-        ws_merged.merge_cells('A2:G2')
+        ws_merged.merge_cells('A2:H2')
         c = ws_merged.cell(row=2, column=1, value='门店软件与增值模块')
         _xl_title_style(c, size=14)
         ws_merged.row_dimensions[2].height = 30
@@ -493,7 +618,7 @@ def _generate_xlsx_custom(data):
                 continue
             # 分区标题行
             ws_merged.merge_cells(start_row=section_row, start_column=1,
-                                  end_row=section_row, end_column=7)
+                                  end_row=section_row, end_column=8)
             c = ws_merged.cell(row=section_row, column=1, value=cat_name)
             c.font = Font(name='微软雅黑', bold=True, size=10, color='CC8800')
             c.fill = PatternFill('solid', fgColor='FFFBF0')
@@ -514,7 +639,7 @@ def _generate_xlsx_custom(data):
         ws.sheet_view.showGridLines = False
         _xl_set_col_widths(ws)
         _xl_add_header_logos(ws)
-        ws.merge_cells('A2:G2')
+        ws.merge_cells('A2:H2')
         c = ws.cell(row=2, column=1, value='总部模块')
         _xl_title_style(c, size=14)
         ws.row_dimensions[2].height = 30
@@ -530,7 +655,7 @@ def _generate_xlsx_custom(data):
         ws.sheet_view.showGridLines = False
         _xl_set_col_widths(ws)
         _xl_add_header_logos(ws)
-        ws.merge_cells('A2:G2')
+        ws.merge_cells('A2:H2')
         c = ws.cell(row=2, column=1, value='实施服务')
         _xl_title_style(c, size=14)
         ws.row_dimensions[2].height = 30
@@ -540,9 +665,14 @@ def _generate_xlsx_custom(data):
         ws.freeze_panes = 'A5'
         cat_totals['实施服务'] = (f'G{total_row}', ws.title)
 
-    # ── 封面追加：条款说明 ──
+    # ── 封面追加：权益类自助充值模块 注释区块 ──
     r = cover_summary_start_row
+    for annotation in (data.get('附加说明') or []):
+        if not annotation:
+            continue
+        r = _xl_write_annotation_block(ws_cover, annotation, r, end_col_letter='H')
 
+    # ── 封面追加：条款说明 ──
     terms = data.get('条款', [
         '以上报价金额均为含税金额，税率为6%；',
         '报价有效期为30个工作日，自报价单生成之日起；',
@@ -550,7 +680,7 @@ def _generate_xlsx_custom(data):
         '涉及短信、小程序授权、外卖平台接口调用等第三方机构收费部分，需单独计费；',
         '如需要三方代仓对接，需要一事一议。',
     ])
-    ws_cover.merge_cells(start_row=r, start_column=1, end_row=r, end_column=2)
+    ws_cover.merge_cells(start_row=r, start_column=1, end_row=r, end_column=8)
     c = ws_cover.cell(row=r, column=1, value='备注与条款：')
     c.font = Font(name='微软雅黑', size=10, bold=True, color='CC8800')
     c.alignment = Alignment(horizontal='left', vertical='center')
@@ -559,7 +689,7 @@ def _generate_xlsx_custom(data):
 
     cn_nums = '①②③④⑤⑥⑦⑧⑨⑩'
     for i, term in enumerate(terms):
-        ws_cover.merge_cells(start_row=r, start_column=1, end_row=r, end_column=2)
+        ws_cover.merge_cells(start_row=r, start_column=1, end_row=r, end_column=8)
         prefix = cn_nums[i] if i < 10 else f'{i+1}.'
         c = ws_cover.cell(row=r, column=1, value=f'{prefix} {term}')
         c.font = Font(name='微软雅黑', size=9, color='555555')
@@ -589,12 +719,19 @@ def _xl_add_tiered_sheet(wb, data):
     items = data.get('报价项目', [])
     n_tiers = len(tiers)
 
-    # 列宽
-    ws.column_dimensions['A'].width = 32
-    ws.column_dimensions['B'].width = 10
+    # 列宽：与明细表 sheet 等宽（总计 _XL_STANDARD_TOTAL_WIDTH=141），A 吸收余量
+    name_width = 32
+    unit_width = 10
     tier_col_letters = ['C', 'D', 'E', 'F', 'G'][:n_tiers]
+    tier_width = max(18.0, (_XL_STANDARD_TOTAL_WIDTH - name_width - unit_width) / n_tiers)
+    # 若 tier_width 因列多而缩到下限 18，则用 A 列补足整体宽度保持一致
+    used = name_width + unit_width + tier_width * n_tiers
+    if used < _XL_STANDARD_TOTAL_WIDTH:
+        name_width += _XL_STANDARD_TOTAL_WIDTH - used
+    ws.column_dimensions['A'].width = name_width
+    ws.column_dimensions['B'].width = unit_width
     for col in tier_col_letters:
-        ws.column_dimensions[col].width = 18
+        ws.column_dimensions[col].width = tier_width
 
     last_col = tier_col_letters[-1]
 
