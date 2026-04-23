@@ -278,7 +278,7 @@ skill 端推荐启动时从这里拉，**不要**自己维护一份 `product_cat
 
 ```bash
 export QUOTE_API_TOKEN=<your_token>
-export QUOTE_API_URL=https://api.quanlaidian.com
+export QUOTE_API_URL=https://<your-api-host>
 ```
 
 ---
@@ -370,7 +370,7 @@ Pydantic `BaseSettings` 从环境变量读取配置：
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
-| `QUOTE_API_BASE_URL` | `https://api.quanlaidian.com` | 公开 base URL |
+| `QUOTE_API_BASE_URL` | `https://<your-api-host>` | 公开 base URL（请向管理员获取实际地址） |
 | `QUOTE_DATA_ROOT` | `data` | 文件、token、DB、审计的根目录 |
 | `QUOTE_FILE_TTL_DAYS` | `7` | 生成文件的过期天数 |
 | `QUOTE_LOG_LEVEL` | `INFO` | 日志级别 |
