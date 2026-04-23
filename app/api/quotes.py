@@ -66,6 +66,17 @@ def _product_catalog_path() -> Path:
     raise PricingError(message="未找到产品目录文件 product_catalog.md")
 
 
+def _product_descriptions_path() -> Path | None:
+    candidates = [
+        Path(__file__).resolve().parent.parent.parent / "references" / "product_descriptions.json",
+        Path("/opt/quanlaidian-quote/references/product_descriptions.json"),
+    ]
+    for p in candidates:
+        if p.exists():
+            return p
+    return None
+
+
 @router.post("/v1/quotes", response_model=QuoteCreated)
 def create_quote_resource(
     form: QuoteForm,
@@ -90,6 +101,7 @@ def create_quote_resource(
             db_path=settings.data_root / "quote.db",
             baseline=_baseline(),
             product_catalog_path=_product_catalog_path(),
+            product_descriptions_path=_product_descriptions_path(),
             idempotency_key=idempotency_key,
         )
     except ValueError as e:

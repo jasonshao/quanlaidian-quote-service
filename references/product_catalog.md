@@ -1,6 +1,10 @@
 # 全来店产品目录与标准售价（对客价格）
 
 > 本文件包含所有全来店产品的对客标准价格，用于报价单生成。
+> 各产品的**功能说明**与「权益类自助充值模块」提示文案另行维护在
+> [`product_descriptions.json`](product_descriptions.json)，由
+> [`ops/extract_descriptions_from_xlsx.py`](../ops/extract_descriptions_from_xlsx.py)
+> 从 `全来店底价单V5.xlsx` 生成。
 > 最后更新：2025-07
 
 ---

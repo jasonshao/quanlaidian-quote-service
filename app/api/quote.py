@@ -56,6 +56,17 @@ def _get_product_catalog_path() -> Path:
     raise PricingError(message="未找到产品目录文件 product_catalog.md")
 
 
+def _get_product_descriptions_path() -> Path | None:
+    candidates = [
+        Path(__file__).resolve().parent.parent.parent / "references" / "product_descriptions.json",
+        Path("/opt/quanlaidian-quote/references/product_descriptions.json"),
+    ]
+    for p in candidates:
+        if p.exists():
+            return p
+    return None
+
+
 @router.post("/v1/quote", response_model=QuoteResponse)
 def create_quote_legacy(
     form: QuoteForm,
@@ -74,6 +85,7 @@ def create_quote_legacy(
         db_path=db_path,
         baseline=_get_baseline(),
         product_catalog_path=_get_product_catalog_path(),
+        product_descriptions_path=_get_product_descriptions_path(),
     )
 
     storage = _get_storage()

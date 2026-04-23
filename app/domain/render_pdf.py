@@ -437,7 +437,7 @@ def build_standard_template(data, styles):
     # === 报价明细表 ===
     items = data.get('报价项目', [])
 
-    col_widths = [10*mm, 30*mm, 46*mm, 18*mm, 16*mm, 24*mm, 26*mm]
+    col_widths = [8*mm, 22*mm, 32*mm, 14*mm, 12*mm, 20*mm, 22*mm, 40*mm]
     header = [
         Paragraph(_mixed_text('序号'), styles['CellStyleCenter']),
         Paragraph(_mixed_text('商品分类'), styles['CellStyleCenter']),
@@ -446,6 +446,7 @@ def build_standard_template(data, styles):
         Paragraph(_mixed_text('数量'), styles['CellStyleCenter']),
         Paragraph(_mixed_text('商品单价'), styles['CellStyleCenter']),
         Paragraph(_mixed_text('小计'), styles['CellStyleCenter']),
+        Paragraph(_mixed_text('功能说明'), styles['CellStyleCenter']),
     ]
 
     table_data = [header]
@@ -472,8 +473,22 @@ def build_standard_template(data, styles):
             Paragraph(_mixed_text(qty), styles['CellStyleCenter']),
             Paragraph(_mixed_text(fmt_money(unit_price)), styles['CellStyleRight']),
             Paragraph(_mixed_text(fmt_money(subtotal)), styles['CellStyleRight']),
+            Paragraph(_mixed_text(item.get('功能说明', '') or ''), styles['CellStyle']),
         ]
         table_data.append(row)
+
+        # Sub-rows: expand a 门店套餐 into its constituent modules.
+        for sub in (item.get('子项') or []):
+            table_data.append([
+                Paragraph(_mixed_text(''), styles['CellStyleCenter']),
+                Paragraph(_mixed_text(sub.get('商品分类', '')), styles['CellStyle']),
+                Paragraph(_mixed_text(f"　　{sub.get('商品名称', '')}"), styles['CellStyle']),
+                Paragraph(_mixed_text(sub.get('单位', '')), styles['CellStyleCenter']),
+                Paragraph(_mixed_text('-'), styles['CellStyleCenter']),
+                Paragraph(_mixed_text('-'), styles['CellStyleCenter']),
+                Paragraph(_mixed_text('-'), styles['CellStyleCenter']),
+                Paragraph(_mixed_text(sub.get('功能说明', '') or ''), styles['CellStyle']),
+            ])
 
     # 合计行
     total_float = float(total)
@@ -485,6 +500,7 @@ def build_standard_template(data, styles):
         Paragraph(_mixed_text(''), styles['CellStyle']),
         Paragraph(_mixed_text(''), styles['CellStyle']),
         Paragraph(_mixed_text(fmt_money(total_float)), styles['CellStyleRight']),
+        Paragraph(_mixed_text(''), styles['CellStyle']),
     ]
     table_data.append(total_row)
 
@@ -519,7 +535,10 @@ def build_standard_template(data, styles):
         _mixed_text(f'合计金额（大写）：{chinese_total}'),
         styles['CNNormal']
     ))
-    story.append(Spacer(1, 8*mm))
+    story.append(Spacer(1, 6*mm))
+
+    # === 权益类自助充值模块 注释区块 ===
+    _append_annotation_blocks(story, data, styles)
 
     # === 备注条款 ===
     story.append(Paragraph(_mixed_text('备注：'), styles['CNSection']))
@@ -704,6 +723,31 @@ def _build_tiered_section(data, styles):
 
 
 # ============================================================
+# 权益类自助充值模块 注释区块
+# ============================================================
+def _append_annotation_blocks(story, data, styles):
+    """Render 附加说明 (e.g. 权益类自助充值模块) as a block of labeled paragraphs."""
+    annotations = data.get('附加说明') or []
+    for annotation in annotations:
+        if not annotation:
+            continue
+        title = annotation.get('title', '')
+        category = annotation.get('category', '')
+        heading = f'{title} — {category}' if category else title
+        if heading:
+            story.append(Paragraph(
+                f'<b>{_mixed_text(heading)}</b>',
+                styles['CNSection'],
+            ))
+        for line in annotation.get('text_lines') or []:
+            story.append(Paragraph(
+                _mixed_text(f'* {line}'),
+                styles['CNSmall'],
+            ))
+        story.append(Spacer(1, 4*mm))
+
+
+# ============================================================
 # 定制多页模板（>50店）— PDF
 # ============================================================
 def build_custom_template(data, styles):
@@ -781,7 +825,7 @@ def build_custom_template(data, styles):
         story.append(Paragraph(_mixed_text(cat_name), styles['CNSection']))
         story.append(Spacer(1, 3*mm))
 
-        col_widths = [10*mm, 30*mm, 48*mm, 18*mm, 16*mm, 24*mm, 26*mm]
+        col_widths = [8*mm, 22*mm, 32*mm, 14*mm, 12*mm, 20*mm, 22*mm, 42*mm]
         header = [
             Paragraph(_mixed_text('序号'), styles['CellStyleCenter']),
             Paragraph(_mixed_text('商品分类'), styles['CellStyleCenter']),
@@ -790,6 +834,7 @@ def build_custom_template(data, styles):
             Paragraph(_mixed_text('数量'), styles['CellStyleCenter']),
             Paragraph(_mixed_text('商品单价'), styles['CellStyleCenter']),
             Paragraph(_mixed_text('小计'), styles['CellStyleCenter']),
+            Paragraph(_mixed_text('功能说明'), styles['CellStyleCenter']),
         ]
 
         table_data = [header]
@@ -816,8 +861,22 @@ def build_custom_template(data, styles):
                 Paragraph(_mixed_text(qty), styles['CellStyleCenter']),
                 Paragraph(_mixed_text(fmt_money(unit_price)), styles['CellStyleRight']),
                 Paragraph(_mixed_text(fmt_money(subtotal)), styles['CellStyleRight']),
+                Paragraph(_mixed_text(item.get('功能说明', '') or ''), styles['CellStyle']),
             ]
             table_data.append(row)
+
+            # Sub-rows for 门店套餐 expansion.
+            for sub in (item.get('子项') or []):
+                table_data.append([
+                    Paragraph(_mixed_text(''), styles['CellStyleCenter']),
+                    Paragraph(_mixed_text(sub.get('商品分类', '')), styles['CellStyle']),
+                    Paragraph(_mixed_text(f"　　{sub.get('商品名称', '')}"), styles['CellStyle']),
+                    Paragraph(_mixed_text(sub.get('单位', '')), styles['CellStyleCenter']),
+                    Paragraph(_mixed_text('-'), styles['CellStyleCenter']),
+                    Paragraph(_mixed_text('-'), styles['CellStyleCenter']),
+                    Paragraph(_mixed_text('-'), styles['CellStyleCenter']),
+                    Paragraph(_mixed_text(sub.get('功能说明', '') or ''), styles['CellStyle']),
+                ])
 
         # 小计行
         cat_total_float = float(cat_total)
@@ -830,6 +889,8 @@ def build_custom_template(data, styles):
             Paragraph(_mixed_text(''), styles['CellStyle']),
             Paragraph(_mixed_text('小计'), styles['CellStyleCenter']),
             Paragraph(_mixed_text(fmt_money(cat_total_float)), styles['CellStyleRight']),
+            Paragraph(_mixed_text(''), styles['CellStyle']),
+            Paragraph(_mixed_text(''), styles['CellStyle']),
         ]
         table_data.append(subtotal_row)
 
@@ -880,6 +941,9 @@ def build_custom_template(data, styles):
     ]))
     story.append(summary_table)
     story.append(Spacer(1, 6*mm))
+
+    # === 权益类自助充值模块 注释区块 ===
+    _append_annotation_blocks(story, data, styles)
 
     # 条款
     story.append(Paragraph(_mixed_text('备注与条款：'), styles['CNSection']))
