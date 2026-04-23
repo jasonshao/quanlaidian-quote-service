@@ -830,9 +830,10 @@ def _generate_xlsx_custom(data):
 # 阶梯报价参考 Sheet
 # ============================================================
 def _xl_add_tiered_sheet(wb, data):
-    """在 Excel 工作簿末尾添加阶梯报价参考 Sheet"""
+    """在 Excel 工作簿末尾添加阶梯报价参考 Sheet（9 列：序号/分类/名称/单位/锚点1单价/锚点1小计/锚点2单价/锚点2小计/说明）"""
     tiers = data.get('阶梯配置', [])
-    if not tiers:
+    # 规格要求固定 2 档（锚点1/锚点2）。不足 2 档不渲染。
+    if len(tiers) < 2:
         return
 
     from openpyxl.styles import Font, PatternFill, Alignment
@@ -846,44 +847,38 @@ def _xl_add_tiered_sheet(wb, data):
     _xl_add_watermark_background(ws, quote_no, quote_date)
 
     items = data.get('报价项目', [])
-    n_tiers = len(tiers)
+    tier_low, tier_high = tiers[0], tiers[1]
 
-    # 列宽：与明细表 sheet 等宽（总计 _XL_STANDARD_TOTAL_WIDTH=141），A 吸收余量
-    name_width = 32
-    unit_width = 10
-    tier_col_letters = ['C', 'D', 'E', 'F', 'G'][:n_tiers]
-    tier_width = max(18.0, (_XL_STANDARD_TOTAL_WIDTH - name_width - unit_width) / n_tiers)
-    # 若 tier_width 因列多而缩到下限 18，则用 A 列补足整体宽度保持一致
-    used = name_width + unit_width + tier_width * n_tiers
-    if used < _XL_STANDARD_TOTAL_WIDTH:
-        name_width += _XL_STANDARD_TOTAL_WIDTH - used
-    ws.column_dimensions['A'].width = name_width
-    ws.column_dimensions['B'].width = unit_width
-    for col in tier_col_letters:
-        ws.column_dimensions[col].width = tier_width
-
-    last_col = tier_col_letters[-1]
+    # 列宽：总和对齐 _XL_STANDARD_TOTAL_WIDTH=141（明细表基准），I 列吸收余量
+    widths = {'A': 7, 'B': 16, 'C': 26, 'D': 10, 'E': 14, 'F': 16, 'G': 14, 'H': 16, 'I': 22}
+    diff = _XL_STANDARD_TOTAL_WIDTH - sum(widths.values())
+    if diff:
+        widths['I'] += diff
+    for col, w in widths.items():
+        ws.column_dimensions[col].width = w
 
     # Logo 行（行1）
     _xl_add_header_logos(ws)
 
     # 标题
-    ws.merge_cells(f'A2:{last_col}2')
+    ws.merge_cells('A2:I2')
     c = ws.cell(row=2, column=1, value='阶梯报价参考')
     _xl_title_style(c, size=14)
     ws.row_dimensions[2].height = 32
 
-    # 表头
-    def tier_label(t):
-        return t['标签']
-
-    headers = ['商品名称', '单位'] + [tier_label(t) for t in tiers]
+    headers = [
+        '序号', '商品分类', '商品名称', '单位',
+        f"{tier_low['标签']} 单价", f"{tier_low['标签']} 小计",
+        f"{tier_high['标签']} 单价", f"{tier_high['标签']} 小计",
+        '功能说明',
+    ]
     for ci, h in enumerate(headers, 1):
         c = ws.cell(row=3, column=ci, value=h)
         _xl_header_style(c)
     ws.row_dimensions[3].height = 22
 
     current_row = 4
+    seq = 0
 
     cat_order = ['门店软件套餐', '门店增值模块', '总部模块', '实施服务']
     categories = {k: [] for k in cat_order}
@@ -896,17 +891,24 @@ def _xl_add_tiered_sheet(wb, data):
         else:
             categories['门店软件套餐'].append(item)
 
-    tier_grand_totals = [Decimal('0')] * n_tiers
+    grand_totals = [Decimal('0'), Decimal('0')]
     NO_TIER_DISCOUNT_CATS = {'实施服务'}
+
+    SUBTOTAL_BG = 'FFF5D6'
+    TOTAL_BG = 'FFE082'
+
+    def _apply_bg(cells, bg):
+        for cell in cells:
+            cell.fill = PatternFill('solid', fgColor=bg)
 
     for cat_name in cat_order:
         cat_items = categories[cat_name]
         if not cat_items:
             continue
 
-        # 分类标题行
+        # 分类标题行：跨 A-I 合并
         ws.merge_cells(start_row=current_row, start_column=1,
-                       end_row=current_row, end_column=2 + n_tiers)
+                       end_row=current_row, end_column=9)
         c = ws.cell(row=current_row, column=1, value=cat_name)
         c.font = Font(name='微软雅黑', bold=True, size=10, color='CC8800')
         c.fill = PatternFill('solid', fgColor='FFFBF0')
@@ -914,91 +916,115 @@ def _xl_add_tiered_sheet(wb, data):
         ws.row_dimensions[current_row].height = 18
         current_row += 1
 
-        cat_tier_totals = [Decimal('0')] * n_tiers
+        cat_subtotals = [Decimal('0'), Decimal('0')]
         apply_tier_discount = cat_name not in NO_TIER_DISCOUNT_CATS
 
         for item in cat_items:
+            seq += 1
             unit = item.get('单位', '')
             item_qty = item.get('数量', 1)
             is_per_store = '店' in unit
-            unit_price = get_item_unit_price(item)
+            unit_price_item = get_item_unit_price(item)
+            is_gift = unit_price_item == '赠送'
 
-            c = ws.cell(row=current_row, column=1, value=item.get('商品名称', ''))
+            # A: 序号
+            c = ws.cell(row=current_row, column=1, value=seq)
+            c.font = Font(name='微软雅黑', size=9)
+            c.alignment = Alignment(horizontal='center', vertical='center')
+            # B: 商品分类
+            c = ws.cell(row=current_row, column=2, value=item.get('商品分类', ''))
             c.font = Font(name='微软雅黑', size=9)
             c.alignment = Alignment(horizontal='left', vertical='center')
-
-            c = ws.cell(row=current_row, column=2, value=unit)
+            # C: 商品名称
+            c = ws.cell(row=current_row, column=3, value=item.get('商品名称', ''))
+            c.font = Font(name='微软雅黑', size=9)
+            c.alignment = Alignment(horizontal='left', vertical='center')
+            # D: 单位
+            c = ws.cell(row=current_row, column=4, value=unit)
             c.font = Font(name='微软雅黑', size=9)
             c.alignment = Alignment(horizontal='center', vertical='center')
 
-            if unit_price == '赠送':
-                for ci in range(n_tiers):
-                    c = ws.cell(row=current_row, column=3 + ci, value='赠送')
-                    c.font = Font(name='微软雅黑', size=9)
-                    c.alignment = Alignment(horizontal='center', vertical='center')
-            else:
-                for ti, t in enumerate(tiers):
-                    d = Decimal(str(get_deal_price_factor(t))) if apply_tier_discount else Decimal('1')
-                    qty = Decimal(str(t['门店数'])) if is_per_store else Decimal(str(item_qty))
-                    actual = get_tier_unit_price(item, d) if apply_tier_discount else unit_price
-                    subtotal = (actual * qty).quantize(Decimal('1'), rounding=ROUND_HALF_UP)
-                    cat_tier_totals[ti] += subtotal
-                    c = ws.cell(row=current_row, column=3 + ti, value=int(subtotal))
-                    c.font = Font(name='微软雅黑', size=9)
-                    c.number_format = '#,##0'
-                    c.alignment = Alignment(horizontal='right', vertical='center')
+            for ti, tier in enumerate((tier_low, tier_high)):
+                col_unit = 5 + ti * 2  # E=5, G=7
+                col_sub = 6 + ti * 2   # F=6, H=8
+                if is_gift:
+                    for col in (col_unit, col_sub):
+                        cc = ws.cell(row=current_row, column=col, value='赠送')
+                        cc.font = Font(name='微软雅黑', size=9)
+                        cc.alignment = Alignment(horizontal='center', vertical='center')
+                else:
+                    d = Decimal(str(get_deal_price_factor(tier))) if apply_tier_discount else Decimal('1')
+                    actual_price = get_tier_unit_price(item, d) if apply_tier_discount else unit_price_item
+                    qty = Decimal(str(tier['门店数'])) if is_per_store else Decimal(str(item_qty))
+                    subtotal = (actual_price * qty).quantize(Decimal('1'), rounding=ROUND_HALF_UP)
+                    cat_subtotals[ti] += subtotal
+                    # 单价
+                    cu = ws.cell(row=current_row, column=col_unit, value=int(actual_price))
+                    cu.font = Font(name='微软雅黑', size=9)
+                    cu.number_format = '#,##0'
+                    cu.alignment = Alignment(horizontal='right', vertical='center')
+                    # 小计
+                    cs = ws.cell(row=current_row, column=col_sub, value=int(subtotal))
+                    cs.font = Font(name='微软雅黑', size=9)
+                    cs.number_format = '#,##0'
+                    cs.alignment = Alignment(horizontal='right', vertical='center')
 
-            ws.row_dimensions[current_row].height = 18
+            # I: 功能说明
+            description = item.get('功能说明', '') or ''
+            c = ws.cell(row=current_row, column=9, value=description)
+            c.font = Font(name='微软雅黑', size=9)
+            c.alignment = Alignment(horizontal='left', vertical='center', wrap_text=True)
+            line_count = max(1, description.count('\n') + 1) if description else 1
+            ws.row_dimensions[current_row].height = max(18, 13 * min(line_count, 6))
             current_row += 1
 
         # 分类小计行
         c = ws.cell(row=current_row, column=2, value='小计')
         c.font = Font(name='微软雅黑', bold=True, size=9)
-        c.fill = PatternFill('solid', fgColor='FFF5D6')
         c.alignment = Alignment(horizontal='center', vertical='center')
-        for ti, tot in enumerate(cat_tier_totals):
-            tier_grand_totals[ti] += tot
-            c = ws.cell(row=current_row, column=3 + ti, value=int(tot))
-            c.font = Font(name='微软雅黑', bold=True, size=9)
-            c.number_format = '#,##0'
-            c.fill = PatternFill('solid', fgColor='FFF5D6')
-            c.alignment = Alignment(horizontal='right', vertical='center')
+        for ti, sub in enumerate(cat_subtotals):
+            grand_totals[ti] += sub
+            col = 6 + ti * 2  # F=6, H=8
+            cc = ws.cell(row=current_row, column=col, value=int(sub))
+            cc.font = Font(name='微软雅黑', bold=True, size=9)
+            cc.number_format = '#,##0'
+            cc.alignment = Alignment(horizontal='right', vertical='center')
+        _apply_bg((ws.cell(row=current_row, column=col) for col in range(1, 10)), SUBTOTAL_BG)
         ws.row_dimensions[current_row].height = 18
         current_row += 1
 
     # 合计行
     c = ws.cell(row=current_row, column=2, value='合计')
     c.font = Font(name='微软雅黑', bold=True, size=10, color='CC8800')
-    c.fill = PatternFill('solid', fgColor='FFE082')
     c.alignment = Alignment(horizontal='center', vertical='center')
-    for ti, tot in enumerate(tier_grand_totals):
-        c = ws.cell(row=current_row, column=3 + ti, value=int(tot))
-        c.font = Font(name='微软雅黑', bold=True, size=10, color='CC8800')
-        c.number_format = '#,##0'
-        c.fill = PatternFill('solid', fgColor='FFE082')
-        c.alignment = Alignment(horizontal='right', vertical='center')
+    for ti, tot in enumerate(grand_totals):
+        col = 6 + ti * 2
+        cc = ws.cell(row=current_row, column=col, value=int(tot))
+        cc.font = Font(name='微软雅黑', bold=True, size=10, color='CC8800')
+        cc.number_format = '#,##0'
+        cc.alignment = Alignment(horizontal='right', vertical='center')
+    _apply_bg((ws.cell(row=current_row, column=col) for col in range(1, 10)), TOTAL_BG)
     ws.row_dimensions[current_row].height = 22
-    grand_total_row = current_row
     current_row += 1
 
-    # 折算单店年费行
+    # 折算单店年费行：A+B 合并
     ws.merge_cells(start_row=current_row, start_column=1,
                    end_row=current_row, end_column=2)
     c = ws.cell(row=current_row, column=1, value='折算单店年费')
     c.font = Font(name='微软雅黑', bold=True, size=9)
-    c.fill = PatternFill('solid', fgColor='FFF5D6')
     c.alignment = Alignment(horizontal='left', vertical='center')
-    for ti, t in enumerate(tiers):
-        stores = Decimal(str(t['门店数']))
-        per_store = (tier_grand_totals[ti] / stores).quantize(Decimal('1'), rounding=ROUND_HALF_UP)
-        c = ws.cell(row=current_row, column=3 + ti, value=int(per_store))
-        c.font = Font(name='微软雅黑', size=9)
-        c.number_format = '#,##0'
-        c.fill = PatternFill('solid', fgColor='FFF5D6')
-        c.alignment = Alignment(horizontal='right', vertical='center')
+    for ti, tier in enumerate((tier_low, tier_high)):
+        stores = Decimal(str(tier['门店数']))
+        per_store = (grand_totals[ti] / stores).quantize(Decimal('1'), rounding=ROUND_HALF_UP)
+        col = 6 + ti * 2
+        cc = ws.cell(row=current_row, column=col, value=int(per_store))
+        cc.font = Font(name='微软雅黑', size=9)
+        cc.number_format = '#,##0'
+        cc.alignment = Alignment(horizontal='right', vertical='center')
+    _apply_bg((ws.cell(row=current_row, column=col) for col in range(1, 10)), SUBTOTAL_BG)
     ws.row_dimensions[current_row].height = 18
 
-    _xl_apply_border(ws, 3, 1, current_row, 2 + n_tiers)
+    _xl_apply_border(ws, 3, 1, current_row, 9)
 
 
 # ============================================================

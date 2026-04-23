@@ -161,6 +161,49 @@ def test_pdf_contains_description_and_annotation(empty_baseline):
     assert "0.039" in text
 
 
+def test_xlsx_main_table_columns_match_spec(empty_baseline):
+    """Lock the single-tier main table column layout against skill §3.2.1."""
+    import openpyxl, io
+    config = _build_config_with_descriptions("form_full_meal_10_stores.json", empty_baseline)
+    xlsx_bytes = render_xlsx(config)
+    wb = openpyxl.load_workbook(io.BytesIO(xlsx_bytes))
+    ws = wb["报价单"]
+    header_row = next(r for r in range(1, ws.max_row + 1) if ws.cell(r, 1).value == "序号")
+    headers = [ws.cell(header_row, c).value for c in range(1, 9)]
+    assert headers == [
+        "序号", "商品分类", "商品名称", "单位",
+        "数量", "商品单价", "小计", "功能说明",
+    ]
+
+
+def test_xlsx_tiered_sheet_9_column_layout(empty_baseline):
+    """Lock the tiered-comparison sheet header (skill §3.2.2, 9 columns)."""
+    import openpyxl, io
+    config = _build_config_with_descriptions("form_full_meal_10_stores.json", empty_baseline)
+    # Force large-segment routing to produce a 2-tier comparison.
+    config["门店数量"] = 100
+    from app.domain.pricing import build_tier_config
+    config["阶梯配置"] = build_tier_config(True, "正餐", 100)
+    config["pricing_info"]["route_strategy"] = "large-segment"
+    xlsx_bytes = render_xlsx(config)
+    wb = openpyxl.load_workbook(io.BytesIO(xlsx_bytes))
+    assert "阶梯报价参考" in wb.sheetnames
+    ws = wb["阶梯报价参考"]
+    headers = [ws.cell(3, c).value for c in range(1, 10)]
+    assert headers[0:4] == ["序号", "商品分类", "商品名称", "单位"]
+    assert headers[4].endswith("单价")
+    assert headers[5].endswith("小计")
+    assert headers[6].endswith("单价")
+    assert headers[7].endswith("小计")
+    assert headers[8] == "功能说明"
+    # Bottom three summary rows exist: at least one 小计 + 合计 + 折算单店年费.
+    labels = [ws.cell(r, 2).value for r in range(4, ws.max_row + 1)]
+    assert "小计" in labels
+    assert "合计" in labels
+    first_col_last = [ws.cell(r, 1).value for r in range(4, ws.max_row + 1)]
+    assert any(v == "折算单店年费" for v in first_col_last)
+
+
 def test_pdf_package_expanded_sub_modules(empty_baseline):
     try:
         import fitz
