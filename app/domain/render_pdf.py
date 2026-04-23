@@ -534,10 +534,7 @@ def build_standard_template(data, styles):
         cn_num = '①②③④⑤⑥⑦⑧⑨⑩'[i-1] if i <= 10 else f'{i}.'
         story.append(Paragraph(_mixed_text(f'{cn_num} {term}'), styles['CNSmall']))
 
-    # === 权益类 ===
-    story.extend(_build_benefits_section(styles))
-
-    story.append(Spacer(1, 10*mm))
+    story.append(Spacer(1, 12*mm))
 
     # === 页脚公司信息 ===
     story.append(Paragraph(
@@ -548,59 +545,6 @@ def build_standard_template(data, styles):
         _mixed_text('地址：上海市闵行区浦江智慧广场陈行公路2168号7号楼'),
         styles['CNFooter']
     ))
-
-    return story
-
-
-# ============================================================
-# 权益类页脚（标准条款后追加）
-# ============================================================
-def _build_benefits_section(styles):
-    """构建『权益类』段落：标题 + 正文段落（小标题 + 带缩进的列表）。
-
-    正文来自 `references/product_catalog.md` 的 `## 三、权益类` 节。
-    文件缺失或节缺失时返回空 list，不影响出单。
-    """
-    from app.domain.catalog_descriptions import load_benefits_text
-    body = load_benefits_text()
-    if not body:
-        return []
-
-    # Bullet-level ParagraphStyles built on top of CNSmall
-    from reportlab.lib.styles import ParagraphStyle
-    lvl1 = ParagraphStyle(
-        name='BenefitsL1', parent=styles['CNSmall'],
-        leftIndent=10, bulletIndent=0, spaceBefore=1,
-    )
-    lvl2 = ParagraphStyle(
-        name='BenefitsL2', parent=styles['CNSmall'],
-        leftIndent=22, bulletIndent=12, spaceBefore=1,
-    )
-    sub_head = ParagraphStyle(
-        name='BenefitsSubHead', parent=styles['CNBold'],
-        fontSize=10, spaceBefore=6, spaceAfter=2,
-    )
-
-    story = []
-    story.append(Paragraph(_mixed_text('权益类'), styles['CNSection']))
-
-    for raw_line in body.splitlines():
-        line = raw_line.rstrip()
-        if not line:
-            continue
-        # Skip markdown horizontal rules (section separators)
-        if re.fullmatch(r'-{3,}', line):
-            continue
-        if line.startswith('### '):
-            story.append(Paragraph(_mixed_text(line[4:].strip()), sub_head))
-        elif line.startswith('* '):
-            story.append(Paragraph(_mixed_text('• ' + line[2:].strip()), lvl1))
-        elif line.startswith('  - '):
-            story.append(Paragraph(_mixed_text('– ' + line[4:].strip()), lvl2))
-        elif line.startswith('- '):
-            story.append(Paragraph(_mixed_text('– ' + line[2:].strip()), lvl2))
-        else:
-            story.append(Paragraph(_mixed_text(line), styles['CNSmall']))
 
     return story
 
@@ -949,9 +893,6 @@ def build_custom_template(data, styles):
     for i, term in enumerate(terms, 1):
         cn_num = '①②③④⑤⑥⑦⑧⑨⑩'[i-1] if i <= 10 else f'{i}.'
         story.append(Paragraph(_mixed_text(f'{cn_num} {term}'), styles['CNSmall']))
-
-    # === 权益类 ===
-    story.extend(_build_benefits_section(styles))
 
     story.append(Spacer(1, 8*mm))
     story.append(Paragraph(
