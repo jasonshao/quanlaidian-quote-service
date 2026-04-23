@@ -130,6 +130,73 @@ def _xl_total_style(cell, align='right'):
     cell.fill = PatternFill('solid', fgColor='FFF5D6')
     cell.alignment = Alignment(horizontal=align, vertical='center')
 
+def _xl_write_benefits(ws, start_row, end_col=7):
+    """向 worksheet 追加『权益类』段落，返回下一空行号。
+
+    正文来自 `references/product_catalog.md` 的 `## 三、权益类` 节。
+    缺失时返回 `start_row`（不插入），调用方不用额外判空。
+
+    `end_col` 控制段落合并的终止列（标准=7，定制封面=2）。
+    """
+    import re as _re
+    from openpyxl.styles import Font, Alignment
+    from app.domain.catalog_descriptions import load_benefits_text
+
+    body = load_benefits_text()
+    if not body:
+        return start_row
+
+    r = start_row
+
+    # Section title
+    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=end_col)
+    c = ws.cell(row=r, column=1, value='权益类')
+    c.font = Font(name='微软雅黑', size=10, bold=True, color='CC8800')
+    c.alignment = Alignment(horizontal='left', vertical='center')
+    ws.row_dimensions[r].height = 18
+    r += 1
+
+    for raw in body.splitlines():
+        line = raw.rstrip()
+        if not line:
+            continue
+        if _re.fullmatch(r'-{3,}', line):
+            continue
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=end_col)
+        if line.startswith('### '):
+            text = line[4:].strip()
+            c = ws.cell(row=r, column=1, value=text)
+            c.font = Font(name='微软雅黑', size=9, bold=True, color='555555')
+            c.alignment = Alignment(horizontal='left', vertical='center', wrap_text=True)
+            ws.row_dimensions[r].height = 18
+        elif line.startswith('* '):
+            text = '• ' + line[2:].strip()
+            c = ws.cell(row=r, column=1, value='    ' + text)
+            c.font = Font(name='微软雅黑', size=9, color='555555')
+            c.alignment = Alignment(horizontal='left', vertical='center', wrap_text=True)
+            ws.row_dimensions[r].height = 30
+        elif line.startswith('  - '):
+            text = '– ' + line[4:].strip()
+            c = ws.cell(row=r, column=1, value='        ' + text)
+            c.font = Font(name='微软雅黑', size=9, color='555555')
+            c.alignment = Alignment(horizontal='left', vertical='center', wrap_text=True)
+            ws.row_dimensions[r].height = 30
+        elif line.startswith('- '):
+            text = '– ' + line[2:].strip()
+            c = ws.cell(row=r, column=1, value='        ' + text)
+            c.font = Font(name='微软雅黑', size=9, color='555555')
+            c.alignment = Alignment(horizontal='left', vertical='center', wrap_text=True)
+            ws.row_dimensions[r].height = 30
+        else:
+            c = ws.cell(row=r, column=1, value=line)
+            c.font = Font(name='微软雅黑', size=9, color='555555')
+            c.alignment = Alignment(horizontal='left', vertical='center', wrap_text=True)
+            ws.row_dimensions[r].height = 18
+        r += 1
+
+    return r
+
+
 def _xl_apply_border(ws, min_row, min_col, max_row, max_col):
     """为 Excel 单元格区域应用细边框"""
     from openpyxl.styles import Border, Side
@@ -359,8 +426,12 @@ def _generate_xlsx_standard(data):
         c.alignment = Alignment(horizontal='left', vertical='center')
         ws.row_dimensions[r].height = 16
 
+    # ── 权益类 ──
+    benefits_start = terms_start + 1 + len(terms) + 1
+    benefits_end = _xl_write_benefits(ws, benefits_start, end_col=7)
+
     # ── 页脚 ──
-    footer_row = terms_start + 1 + len(terms) + 1
+    footer_row = benefits_end + 1
     ws.merge_cells(start_row=footer_row, start_column=1,
                    end_row=footer_row, end_column=7)
     c = ws.cell(row=footer_row, column=1,
@@ -566,6 +637,9 @@ def _generate_xlsx_custom(data):
         c.alignment = Alignment(horizontal='left', vertical='center')
         ws_cover.row_dimensions[r].height = 16
         r += 1
+
+    # ── 权益类（封面尾部追加）──
+    r = _xl_write_benefits(ws_cover, r + 1, end_col=2)
 
     # NOTE: tiered sheet is added by render_xlsx() entry point, not here
 
