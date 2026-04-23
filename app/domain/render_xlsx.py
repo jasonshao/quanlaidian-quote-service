@@ -34,44 +34,42 @@ from app.domain.render_pdf import (
 # ============================================================
 # 水印配置（与 PDF 保持一致）
 # ============================================================
-_WATERMARK_TEXT_COLOR = (204, 204, 204)   # RGB，浅灰色
-_WATERMARK_ALPHA = 0.15                    # 透明度 0=透明，1=不透明
-_WATERMARK_FONT_SIZE = 36                 # 水印字号（像素）
+_WATERMARK_TEXT_COLOR = (170, 170, 170)   # RGB，浅灰 #AAAAAA，与 PDF 一致
+_WATERMARK_ALPHA = 0.22                    # 透明度 0=透明，1=不透明
+_WATERMARK_FONT_SIZE = 24                 # 水印字号（像素，2000×2000 画布）
 _WATERMARK_ANGLE = -30                    # 倾斜角度（度）
-_WATERMARK_TILE_X_SPACING = 250           # 水印 x 方向重复间距（像素）
-_WATERMARK_TILE_Y_SPACING = 160           # 水印 y 方向重复间距（像素）
+_WATERMARK_TILE_X_SPACING = 450           # 水印 x 方向重复间距（像素）
+_WATERMARK_TILE_Y_SPACING = 280           # 水印 y 方向重复间距（像素）
 
 
 def _generate_watermark_image(quote_no: str, quote_date: str) -> bytes:
     """生成半透明斜向平铺水印 PNG 图片（用于 Excel 背景）。
 
     水印策略：
-    - PIL 绘制，浅灰色 (204,204,204)，透明度 0.15
-    - 斜 -30° 重复排列，覆盖 2000×2000 区域（约 A4 × 3）
-    - 内容：报价编号 + 日期
-    - 返回 PNG 字节流，供 openpyxl 设为 sheet 背景图
+    - PIL 绘制，中灰 (136,136,136)，透明度 0.30
+    - 先在未旋转画布上按网格平铺文字，再整体旋转 -30°
+    - 返回 PNG 字节流，供 openpyxl 嵌入为浮动图像
     """
     from PIL import Image as PILImage, ImageDraw as PILImageDraw, ImageFont as PILImageFont
     from io import BytesIO
-    import math
 
-    # 水印文字
     text = f"{quote_no}  {quote_date}".strip()
     if not text:
         return b''
 
-    # 创建透明底图（2000×2000，覆盖任意扩展内容）
     img_w, img_h = 2000, 2000
     canvas = PILImage.new('RGBA', (img_w, img_h), (255, 255, 255, 0))
     draw = PILImageDraw.Draw(canvas)
 
-    # 尝试加载 CJK 字体（与正文一致）
+    # CJK 字体候选（Linux/macOS 常见位置）
     font = None
     candidates = [
         '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc',
         '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
         '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
         '/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf',
+        '/System/Library/Fonts/PingFang.ttc',
+        '/System/Library/Fonts/STHeiti Light.ttc',
     ]
     for path in candidates:
         from pathlib import Path
@@ -88,43 +86,25 @@ def _generate_watermark_image(quote_no: str, quote_date: str) -> bytes:
         except Exception:
             return b''
 
-    # 绘制多个重复水印
-    angle_rad = math.radians(_WATERMARK_ANGLE)
-    # 沿倾斜方向步进，覆盖整个画布
-    step_x = _WATERMARK_TILE_X_SPACING
-    step_y = _WATERMARK_TILE_Y_SPACING
-    max_dist = math.hypot(img_w, img_h)
-
-    rows = int(max_dist / step_y) + 5
-    cols = int(max_dist / step_x) + 5
-
-    # alpha 值：0~255
     alpha = max(1, min(255, int(255 * _WATERMARK_ALPHA)))
     text_color = _WATERMARK_TEXT_COLOR + (alpha,)
 
-    for r in range(-cols, cols):
-        for c in range(-rows, rows):
-            # 计算斜向网格交点
-            bx = int(c * step_x - r * step_y * 0.5 + img_w / 2)
-            by = int(r * step_y + img_h / 2)
+    # 简单均匀网格平铺（未旋转画布上）
+    step_x = _WATERMARK_TILE_X_SPACING
+    step_y = _WATERMARK_TILE_Y_SPACING
+    y = 0
+    row_idx = 0
+    while y < img_h:
+        # 奇偶行半步错开
+        x_offset = (step_x // 2) if (row_idx % 2) else 0
+        x = -x_offset
+        while x < img_w:
+            draw.text((x, y), text, font=font, fill=text_color)
+            x += step_x
+        y += step_y
+        row_idx += 1
 
-            # 只绘制在画布范围内的
-            if -300 < bx < img_w + 300 and -100 < by < img_h + 100:
-                # 旋转文字（以文字中心为锚）
-                import textwrap
-                lines = textwrap.wrap(text, width=20)
-                line_h = _WATERMARK_FONT_SIZE * 1.4
-                total_h = line_h * len(lines)
-
-                # 画每行文字，带旋转
-                for li, line in enumerate(lines):
-                    line_y = by + li * line_h - total_h / 2
-                    # 简单的对角排列：奇数行错开
-                    offset_x = (li % 2) * step_x * 0.3
-                    x = bx + offset_x
-                    draw.text((x, line_y), line, font=font, fill=text_color)
-
-    # 旋转整个画布
+    # 整体旋转 -30°
     rotated = canvas.rotate(_WATERMARK_ANGLE, expand=True, fillcolor=(255, 255, 255, 0))
 
     buf = BytesIO()
@@ -136,9 +116,9 @@ def _xl_add_watermark_background(ws, quote_no: str, quote_date: str):
     """为 Excel 工作表添加浅色斜向水印背景图（半透明 PNG）。
 
     水印效果：
-    - 浅灰色 (204,204,204)，透明度 15%
-    - 对角斜向排列，内容可清晰阅读
-    - 2000×2000 PNG 作为 sheet 背景图自动平铺
+    - 中灰 (136,136,136)，透明度 30%
+    - 斜 -30° 网格平铺
+    - 2000×2000 PNG 浮动锚定在 sheet 左上 (0,0)，覆盖正常可视区域
     """
     png_bytes = _generate_watermark_image(quote_no, quote_date)
     if not png_bytes:

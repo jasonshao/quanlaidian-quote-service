@@ -135,11 +135,9 @@ _LOGO_LEFT_MM = 15
 _LOGO_TOP_MM = 8
 
 # 水印配置
-_WATERMARK_COLOR = colors.HexColor('#CCCCCC')  # 浅灰色，低对比度
-_WATERMARK_ALPHA = 0.15        # 透明度（0=透明，1=不透明）
-_WATERMARK_FONT_SIZE = 10      # 水印字号
-_WATERMARK_SPACING_X = 120     # 水印 x 方向间距（mm）
-_WATERMARK_SPACING_Y = 90      # 水印 y 方向间距（mm）
+_WATERMARK_COLOR = colors.HexColor('#AAAAAA')  # 浅灰，可辨认但不抢眼
+_WATERMARK_ALPHA = 0.22        # 透明度（0=透明，1=不透明）
+_WATERMARK_FONT_SIZE = 14      # 水印字号
 _WATERMARK_ANGLE = -30         # 水印倾斜角度（度，顺时针为正）
 
 
@@ -148,57 +146,41 @@ _WATERMARK_ANGLE = -30         # 水印倾斜角度（度，顺时针为正）
 # ============================================================
 def _draw_watermark(canvas, doc):
     """在每一页绘制浅色斜向水印，内容为报价编号+日期。
-    
+
     水印策略：
-    - 字体颜色 #CCCCCC，透明度 0.15，斜 -30° 重复排列
-    - 每页 3 个水印（对角+中心），间隔均匀，不遮挡主要内容区
-    - 水印绘制在页面最上层（Logo 之后），不影响内容阅读
+    - 中灰 #888888，透明度 0.30，斜 -30°
+    - 2×3 网格（共 6 个）均匀覆盖整页，留白处清晰可见
+    - 在 onPage 回调中绘制（位于内容下方），表格无显式底色处可透出
     """
-    from reportlab.lib.utils import ImageReader
-    import math
-
-    page_width, page_height = A4
-
-    # 取报价编号和日期（从 document metadata 中透传）
-    # 优先用 SimpleDocTemplate 的 title/authorsubject 传递
     quote_no = getattr(doc, 'title', '') or ''
     date_str = getattr(doc, 'author', '') or ''
-
-    if not quote_no and not date_str:
-        return
 
     watermark_str = f"{quote_no}  {date_str}".strip()
     if not watermark_str:
         return
 
-    # 字体注册（延迟到首次调用）
     _register_fonts()
+
+    page_width, page_height = A4
 
     canvas.saveState()
     canvas.setFillColor(_WATERMARK_COLOR)
     canvas.setFillAlpha(_WATERMARK_ALPHA)
-
-    # 注册字体用于水印（与正文同字体）
     canvas.setFont(_CN_FONT_NAME, _WATERMARK_FONT_SIZE)
 
-    angle_rad = math.radians(_WATERMARK_ANGLE)
-    cos_a = math.cos(angle_rad)
-    sin_a = math.sin(angle_rad)
+    text_width = canvas.stringWidth(watermark_str, _CN_FONT_NAME, _WATERMARK_FONT_SIZE)
 
-    # 水印中心定位点（3 个：对角 + 中心）
     centers = [
-        (page_width * 0.3, page_height * 0.7),  # 左上区域
-        (page_width * 0.7, page_height * 0.3),  # 右下区域
-        (page_width * 0.5, page_height * 0.5),  # 正中
+        (page_width * x, page_height * y)
+        for y in (0.25, 0.55, 0.85)
+        for x in (0.5,)
     ]
 
     for cx, cy in centers:
         canvas.saveState()
         canvas.translate(cx, cy)
         canvas.rotate(_WATERMARK_ANGLE)
-        canvas.drawString(-canvas.stringWidth(watermark_str, _CN_FONT_NAME, _WATERMARK_FONT_SIZE) / 2,
-                          -_WATERMARK_FONT_SIZE / 2,
-                          watermark_str)
+        canvas.drawString(-text_width / 2, -_WATERMARK_FONT_SIZE / 2, watermark_str)
         canvas.restoreState()
 
     canvas.restoreState()
