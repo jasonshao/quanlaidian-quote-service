@@ -140,14 +140,6 @@ def persist_render(
     return render
 
 
-def list_renders(conn: sqlite3.Connection, quote_id: str) -> list[QuoteRender]:
-    rows = conn.execute(
-        "SELECT * FROM quote_render WHERE quote_id=? ORDER BY created_at DESC",
-        (quote_id,),
-    ).fetchall()
-    return [_row_to_render(r) for r in rows]
-
-
 def latest_render(conn: sqlite3.Connection, quote_id: str, format: str) -> Optional[QuoteRender]:
     row = conn.execute(
         """

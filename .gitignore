@@ -3,7 +3,7 @@ data/files/*
 data/audit/*
 !data/audit/.gitkeep
 data/pricing_baseline.json
-data/tokens.json
+data/tokens.json*
 data/quote.db
 data/quote.db-journal
 data/quote.db-shm

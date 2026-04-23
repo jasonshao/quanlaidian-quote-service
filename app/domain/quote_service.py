@@ -1,7 +1,5 @@
-"""Pricing + persistence + render business logic, shared by legacy and
-resource-split endpoints."""
+"""Pricing + persistence + render business logic for the /v1/quote endpoint."""
 import json
-import sqlite3
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -12,20 +10,16 @@ from app.domain.product_descriptions import load_descriptions
 from app.domain.render_pdf import render_pdf
 from app.domain.render_xlsx import render_xlsx
 from app.domain.schema import (
-    ApprovalState,
     FileRef,
-    QuoteItemBreakdown,
     QuoteItemPreview,
     QuotePreview,
     QuoteTotals,
 )
-from app.errors import OutOfRangeError, PricingError, RenderError
+from app.errors import OutOfRangeError, RenderError
 from app.persistence import get_conn
 from app.persistence.models import Approval, Quote, QuoteRender
 from app.persistence.quote_repo import (
     create_quote as _persist_quote,
-    get_approval,
-    get_quote,
     latest_render,
     persist_render as _persist_render,
     upsert_approval,
@@ -185,54 +179,3 @@ def build_preview(config: dict, form: dict) -> QuotePreview:
     )
 
 
-def build_breakdown(config: dict) -> list[QuoteItemBreakdown]:
-    items: list[QuoteItemBreakdown] = []
-    for item in config.get("报价项目", []):
-        standard = item.get("标准价", 0)
-        list_price = int(standard) if standard != "赠送" else 0
-        items.append(
-            QuoteItemBreakdown(
-                name=item["商品名称"],
-                category=item.get("商品分类", ""),
-                module_category=item.get("模块分类", ""),
-                unit=item.get("单位", ""),
-                qty=int(item.get("数量", 0)),
-                list_price=list_price,
-                unit_price=int(item.get("商品单价", 0)),
-                subtotal=int(item.get("报价小计", 0)),
-                cost_unit_price=int(item.get("成本单价", 0)),
-                cost_subtotal=int(item.get("成本小计", 0)),
-                profit=int(item.get("利润", 0)),
-                margin_pct=float(item.get("利润率", 0)),
-                protected=bool(item.get("protected_item_bypass", False)),
-                factor=float(item.get("成交价系数", 1.0)),
-            )
-        )
-    return items
-
-
-def approval_to_state(approval: Optional[Approval]) -> ApprovalState:
-    if approval is None:
-        return ApprovalState(required=False, state="not_required", reasons=[])
-    return ApprovalState(
-        required=approval.required,
-        state=approval.state,
-        reasons=approval.reasons,
-        decided_by=approval.decided_by,
-        decision_reason=approval.decision_reason,
-        decided_at=approval.decided_at,
-    )
-
-
-def fetch_quote_or_404(db_path: Path, quote_id: str, org: str) -> Quote:
-    """Fetch a quote by id, enforce org scoping. Raises PricingError if not found."""
-    with get_conn(db_path) as conn:
-        q = get_quote(conn, quote_id)
-    if q is None or q.org != org:
-        raise PricingError(message=f"quote {quote_id} 不存在或不属于当前 org")
-    return q
-
-
-def fetch_approval(db_path: Path, quote_id: str) -> Optional[Approval]:
-    with get_conn(db_path) as conn:
-        return get_approval(conn, quote_id)
