@@ -32,6 +32,121 @@ from app.domain.render_pdf import (
 
 
 # ============================================================
+# 水印配置（与 PDF 保持一致）
+# ============================================================
+_WATERMARK_TEXT_COLOR = (170, 170, 170)   # RGB，浅灰 #AAAAAA，与 PDF 一致
+_WATERMARK_ALPHA = 0.22                    # 透明度 0=透明，1=不透明
+_WATERMARK_FONT_SIZE = 24                 # 水印字号（像素，2000×2000 画布）
+_WATERMARK_ANGLE = -30                    # 倾斜角度（度）
+_WATERMARK_TILE_X_SPACING = 450           # 水印 x 方向重复间距（像素）
+_WATERMARK_TILE_Y_SPACING = 280           # 水印 y 方向重复间距（像素）
+
+
+def _generate_watermark_image(quote_no: str, quote_date: str) -> bytes:
+    """生成半透明斜向平铺水印 PNG 图片（用于 Excel 背景）。
+
+    水印策略：
+    - PIL 绘制，中灰 (136,136,136)，透明度 0.30
+    - 先在未旋转画布上按网格平铺文字，再整体旋转 -30°
+    - 返回 PNG 字节流，供 openpyxl 嵌入为浮动图像
+    """
+    from PIL import Image as PILImage, ImageDraw as PILImageDraw, ImageFont as PILImageFont
+    from io import BytesIO
+
+    text = f"{quote_no}  {quote_date}".strip()
+    if not text:
+        return b''
+
+    img_w, img_h = 2000, 2000
+    canvas = PILImage.new('RGBA', (img_w, img_h), (255, 255, 255, 0))
+    draw = PILImageDraw.Draw(canvas)
+
+    # CJK 字体候选（Linux/macOS 常见位置）
+    font = None
+    candidates = [
+        '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc',
+        '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
+        '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
+        '/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf',
+        '/System/Library/Fonts/PingFang.ttc',
+        '/System/Library/Fonts/STHeiti Light.ttc',
+    ]
+    for path in candidates:
+        from pathlib import Path
+        if Path(path).exists():
+            try:
+                font = PILImageFont.truetype(path, _WATERMARK_FONT_SIZE)
+                break
+            except Exception:
+                continue
+
+    if font is None:
+        try:
+            font = PILImageFont.load_default()
+        except Exception:
+            return b''
+
+    alpha = max(1, min(255, int(255 * _WATERMARK_ALPHA)))
+    text_color = _WATERMARK_TEXT_COLOR + (alpha,)
+
+    # 简单均匀网格平铺（未旋转画布上）
+    step_x = _WATERMARK_TILE_X_SPACING
+    step_y = _WATERMARK_TILE_Y_SPACING
+    y = 0
+    row_idx = 0
+    while y < img_h:
+        # 奇偶行半步错开
+        x_offset = (step_x // 2) if (row_idx % 2) else 0
+        x = -x_offset
+        while x < img_w:
+            draw.text((x, y), text, font=font, fill=text_color)
+            x += step_x
+        y += step_y
+        row_idx += 1
+
+    # 整体旋转 -30°
+    rotated = canvas.rotate(_WATERMARK_ANGLE, expand=True, fillcolor=(255, 255, 255, 0))
+
+    buf = BytesIO()
+    rotated.save(buf, format='PNG')
+    return buf.getvalue()
+
+
+def _xl_add_watermark_background(ws, quote_no: str, quote_date: str):
+    """为 Excel 工作表添加浅色斜向水印背景图（半透明 PNG）。
+
+    水印效果：
+    - 中灰 (136,136,136)，透明度 30%
+    - 斜 -30° 网格平铺
+    - 2000×2000 PNG 浮动锚定在 sheet 左上 (0,0)，覆盖正常可视区域
+    """
+    png_bytes = _generate_watermark_image(quote_no, quote_date)
+    if not png_bytes:
+        return
+
+    try:
+        from io import BytesIO
+        from openpyxl.drawing.image import Image as XLImage
+        from openpyxl.drawing.spreadsheet_drawing import AbsoluteAnchor
+        from openpyxl.drawing.xdr import XDRPoint2D, XDRPositiveSize2D
+        from openpyxl.utils.units import pixels_to_EMU
+
+        buf = BytesIO(png_bytes)
+        img = XLImage(buf)
+        # 铺满整页：大尺寸 + AbsoluteAnchor 定位到 (0,0)
+        # 使用足够大的尺寸让它覆盖整个 sheet 可视区域
+        img.width = 2000
+        img.height = 2000
+        pos = XDRPoint2D(x=pixels_to_EMU(0), y=pixels_to_EMU(0))
+        ext = XDRPositiveSize2D(cx=pixels_to_EMU(2000), cy=pixels_to_EMU(2000))
+        img.anchor = AbsoluteAnchor(pos=pos, ext=ext)
+        ws.add_image(img)
+    except Exception:
+        # 水印失败不影响主流程，静默跳过
+        pass
+
+
+# ============================================================
 # Header logos — inserted at top-left of every sheet's row 1.
 # Caller MUST leave row 1 free (content starts from row 2).
 # ============================================================
@@ -377,6 +492,11 @@ def _generate_xlsx_standard(data):
 
     _xl_set_col_widths(ws)
 
+    # ── 水印背景（最底层，先添加，再叠内容）──
+    quote_no = data.get('报价编号', gen_quote_number())
+    quote_date = data.get('报价日期', datetime.now().strftime('%Y-%m-%d'))
+    _xl_add_watermark_background(ws, quote_no, quote_date)
+
     # ── Logo 行（行1）──
     _xl_add_header_logos(ws)
 
@@ -511,7 +631,7 @@ def _generate_xlsx_custom(data):
 
     client = data.get('客户信息', {})
     quote_no = data.get('报价编号', gen_quote_number())
-    quote_date = data.get('报价日期', datetime.now().strftime('%Y年%m月%d日'))
+    quote_date = data.get('报价日期', datetime.now().strftime('%Y-%m-%d'))
     validity = data.get('报价有效期', '30个工作日')
     items = data.get('报价项目', [])
 
@@ -520,6 +640,7 @@ def _generate_xlsx_custom(data):
     ws_cover.sheet_view.showGridLines = False
     # 与明细表 sheet 统一列宽（8 列 共 141 单位）
     _xl_set_col_widths(ws_cover)
+    _xl_add_watermark_background(ws_cover, quote_no, quote_date)
 
     _xl_add_header_logos(ws_cover)
     ws_cover.merge_cells('A2:H2')
@@ -603,6 +724,7 @@ def _generate_xlsx_custom(data):
         ws_merged = wb.create_sheet('门店软件与增值')
         ws_merged.sheet_view.showGridLines = False
         _xl_set_col_widths(ws_merged)
+        _xl_add_watermark_background(ws_merged, quote_no, quote_date)
 
         _xl_add_header_logos(ws_merged)
         ws_merged.merge_cells('A2:H2')
@@ -638,6 +760,7 @@ def _generate_xlsx_custom(data):
         ws = wb.create_sheet('总部模块')
         ws.sheet_view.showGridLines = False
         _xl_set_col_widths(ws)
+        _xl_add_watermark_background(ws, quote_no, quote_date)
         _xl_add_header_logos(ws)
         ws.merge_cells('A2:H2')
         c = ws.cell(row=2, column=1, value='总部模块')
@@ -654,6 +777,7 @@ def _generate_xlsx_custom(data):
         ws = wb.create_sheet('实施服务')
         ws.sheet_view.showGridLines = False
         _xl_set_col_widths(ws)
+        _xl_add_watermark_background(ws, quote_no, quote_date)
         _xl_add_header_logos(ws)
         ws.merge_cells('A2:H2')
         c = ws.cell(row=2, column=1, value='实施服务')
@@ -715,6 +839,11 @@ def _xl_add_tiered_sheet(wb, data):
 
     ws = wb.create_sheet('阶梯报价参考')
     ws.sheet_view.showGridLines = False
+
+    # 水印
+    quote_no = data.get('报价编号', gen_quote_number())
+    quote_date = data.get('报价日期', datetime.now().strftime('%Y-%m-%d'))
+    _xl_add_watermark_background(ws, quote_no, quote_date)
 
     items = data.get('报价项目', [])
     n_tiers = len(tiers)

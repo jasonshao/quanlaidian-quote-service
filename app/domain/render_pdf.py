@@ -26,7 +26,7 @@ from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import (
     SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer,
-    PageBreak, KeepTogether
+    PageBreak, KeepTogether, Image
 )
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
@@ -134,7 +134,61 @@ _LOGO_GAP_MM = 3
 _LOGO_LEFT_MM = 15
 _LOGO_TOP_MM = 8
 
+# 水印配置
+_WATERMARK_COLOR = colors.HexColor('#AAAAAA')  # 浅灰，可辨认但不抢眼
+_WATERMARK_ALPHA = 0.22        # 透明度（0=透明，1=不透明）
+_WATERMARK_FONT_SIZE = 14      # 水印字号
+_WATERMARK_ANGLE = -30         # 水印倾斜角度（度，顺时针为正）
 
+
+# ============================================================
+# 水印绘制
+# ============================================================
+def _draw_watermark(canvas, doc):
+    """在每一页绘制浅色斜向水印，内容为报价编号+日期。
+
+    水印策略：
+    - 中灰 #888888，透明度 0.30，斜 -30°
+    - 2×3 网格（共 6 个）均匀覆盖整页，留白处清晰可见
+    - 在 onPage 回调中绘制（位于内容下方），表格无显式底色处可透出
+    """
+    quote_no = getattr(doc, 'title', '') or ''
+    date_str = getattr(doc, 'author', '') or ''
+
+    watermark_str = f"{quote_no}  {date_str}".strip()
+    if not watermark_str:
+        return
+
+    _register_fonts()
+
+    page_width, page_height = A4
+
+    canvas.saveState()
+    canvas.setFillColor(_WATERMARK_COLOR)
+    canvas.setFillAlpha(_WATERMARK_ALPHA)
+    canvas.setFont(_CN_FONT_NAME, _WATERMARK_FONT_SIZE)
+
+    text_width = canvas.stringWidth(watermark_str, _CN_FONT_NAME, _WATERMARK_FONT_SIZE)
+
+    centers = [
+        (page_width * x, page_height * y)
+        for y in (0.25, 0.55, 0.85)
+        for x in (0.5,)
+    ]
+
+    for cx, cy in centers:
+        canvas.saveState()
+        canvas.translate(cx, cy)
+        canvas.rotate(_WATERMARK_ANGLE)
+        canvas.drawString(-text_width / 2, -_WATERMARK_FONT_SIZE / 2, watermark_str)
+        canvas.restoreState()
+
+    canvas.restoreState()
+
+
+# ============================================================
+# 页眉 Logo 绘制（每页回调）
+# ============================================================
 def _draw_header_logos(canvas, doc):
     """Draw two brand logos in the top-left of every page."""
     from reportlab.lib.utils import ImageReader
@@ -1011,6 +1065,11 @@ def render_pdf(config: dict, fonts_dir: Path | None = None) -> bytes:
         story = build_custom_template(config, styles)
 
     buf = BytesIO()
+
+    # 透传水印内容（通过 doc.title / doc.author 传递给 canvas 回调）
+    quote_no = config.get('报价编号', gen_quote_number())
+    quote_date = config.get('报价日期', datetime.now().strftime('%Y-%m-%d'))
+
     doc = SimpleDocTemplate(
         buf,
         pagesize=A4,
@@ -1018,6 +1077,17 @@ def render_pdf(config: dict, fonts_dir: Path | None = None) -> bytes:
         rightMargin=15*mm,
         topMargin=18*mm,
         bottomMargin=15*mm,
+        title=quote_no,
+        author=quote_date,
     )
-    doc.build(story, onFirstPage=_draw_header_logos, onLaterPages=_draw_header_logos)
+
+    def on_first_page(canvas, doc):
+        _draw_header_logos(canvas, doc)
+        _draw_watermark(canvas, doc)
+
+    def on_later_pages(canvas, doc):
+        _draw_header_logos(canvas, doc)
+        _draw_watermark(canvas, doc)
+
+    doc.build(story, onFirstPage=on_first_page, onLaterPages=on_later_pages)
     return buf.getvalue()
