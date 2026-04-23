@@ -967,6 +967,25 @@ def build_quotation_config(form: dict, baseline: dict, product_catalog_path: Pat
         standard_price, cost_price, _ = resolve_product_pricing(module, meal_type, baseline_index)
         items.append(build_quote_item(module, standard_price, cost_price, store_count, deal_price_factor, category, "门店增值模块", description=_desc_for(module)))
 
+    # 电子发票接口 → 自动追加"电子发票-税号"一行（issue #8 的联动规则）。
+    # 数量取 form["税号数量"]，缺失/非法时默认 1。
+    if "电子发票接口" in form.get("门店增值模块", []):
+        tax_id_product = lookup_product(product_index, "电子发票-税号", meal_type=meal_type, group="门店增值模块")
+        tax_id_standard_price, tax_id_cost_price, _ = resolve_product_pricing(tax_id_product, meal_type, baseline_index)
+        try:
+            tax_id_qty = int(form.get("税号数量", 1) or 1)
+        except (TypeError, ValueError):
+            tax_id_qty = 1
+        if tax_id_qty < 1:
+            tax_id_qty = 1
+        tax_id_category = "保护类商品" if is_protected_product(tax_id_product["name"]) else "增值模块"
+        items.append(build_quote_item(
+            tax_id_product, tax_id_standard_price, tax_id_cost_price,
+            tax_id_qty, deal_price_factor,
+            tax_id_category, "门店增值模块",
+            description=_desc_for(tax_id_product),
+        ))
+
     for module_name in form.get("总部模块", []):
         quantity_field = {
             "配送中心": "配送中心数量",

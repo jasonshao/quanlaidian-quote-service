@@ -10,6 +10,7 @@ class QuoteForm(BaseModel):
     门店数量: int = Field(ge=1, le=300)
     门店套餐: str
     门店增值模块: list[str] = Field(default_factory=list)
+    税号数量: int = Field(default=1, ge=1)
     总部模块: list[str] = Field(default_factory=list)
     配送中心数量: int = Field(default=0, ge=0)
     生产加工中心数量: int = Field(default=0, ge=0)

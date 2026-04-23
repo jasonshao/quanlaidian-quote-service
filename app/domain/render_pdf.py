@@ -626,13 +626,14 @@ def build_standard_template(data, styles):
 # 阶梯报价对比页（定制版附页）
 # ============================================================
 def _build_tiered_section(data, styles):
-    """构建阶梯报价对比页，按门店规模展示不同折扣下的费用对比"""
+    """构建阶梯报价对比页，9 列：序号/分类/名称/单位/锚点1单价/锚点1小计/锚点2单价/锚点2小计/说明"""
     tiers = data.get('阶梯配置', [])
-    if not tiers:
+    # 规格要求固定 2 档（锚点1/锚点2）。不足 2 档不渲染。
+    if len(tiers) < 2:
         return []
 
     items = data.get('报价项目', [])
-    n_tiers = len(tiers)
+    tier_low, tier_high = tiers[0], tiers[1]
 
     story = [PageBreak()]
     story.append(Paragraph(_mixed_text('阶梯报价参考'), styles['CNSection']))
@@ -643,23 +644,22 @@ def _build_tiered_section(data, styles):
     ))
     story.append(Spacer(1, 3*mm))
 
-    # 列宽：商品名称52 | 单位14 | 各 tier 平分剩余
-    remaining = 180 - 52 - 14
-    tier_col_w = remaining * mm / n_tiers
-    col_widths = [52*mm, 14*mm] + [tier_col_w] * n_tiers
-
-    # 表头行
-    def tier_label(t):
-        return t['标签']
+    # 列宽：A=8 B=20 C=30 D=14 E=18 F=20 G=18 H=20 I=32（总 180mm）
+    col_widths = [8*mm, 20*mm, 30*mm, 14*mm, 18*mm, 20*mm, 18*mm, 20*mm, 32*mm]
 
     header = [
+        Paragraph(_mixed_text('序号'), styles['CellStyleCenter']),
+        Paragraph(_mixed_text('商品分类'), styles['CellStyleCenter']),
         Paragraph(_mixed_text('商品名称'), styles['CellStyleCenter']),
         Paragraph(_mixed_text('单位'), styles['CellStyleCenter']),
-    ] + [Paragraph(_mixed_text(tier_label(t)), styles['CellStyleCenter']) for t in tiers]
-
+        Paragraph(_mixed_text(f"{tier_low['标签']} 单价"), styles['CellStyleCenter']),
+        Paragraph(_mixed_text(f"{tier_low['标签']} 小计"), styles['CellStyleCenter']),
+        Paragraph(_mixed_text(f"{tier_high['标签']} 单价"), styles['CellStyleCenter']),
+        Paragraph(_mixed_text(f"{tier_high['标签']} 小计"), styles['CellStyleCenter']),
+        Paragraph(_mixed_text('功能说明'), styles['CellStyleCenter']),
+    ]
     table_data = [header]
 
-    # 按模块分组（排除硬件设备）
     cat_order = ['门店软件套餐', '门店增值模块', '总部模块', '实施服务']
     categories = {k: [] for k in cat_order}
     for item in items:
@@ -671,84 +671,108 @@ def _build_tiered_section(data, styles):
         else:
             categories['门店软件套餐'].append(item)
 
-    tier_grand_totals = [Decimal('0')] * n_tiers
+    grand_totals = [Decimal('0'), Decimal('0')]
     cat_header_rows = []
     subtotal_rows = []
-
     NO_TIER_DISCOUNT_CATS = {'实施服务'}
+    seq = 0
 
     for cat_name in cat_order:
         cat_items = categories[cat_name]
         if not cat_items:
             continue
 
-        cat_row_idx = len(table_data)
-        cat_header_rows.append(cat_row_idx)
+        cat_header_rows.append(len(table_data))
         cat_row = [Paragraph(_mixed_text(cat_name), styles['CNBold'])] + \
-                  [Paragraph('', styles['CellStyle'])] * (1 + n_tiers)
+                  [Paragraph('', styles['CellStyle'])] * 8
         table_data.append(cat_row)
 
-        cat_tier_totals = [Decimal('0')] * n_tiers
+        cat_subtotals = [Decimal('0'), Decimal('0')]
         apply_tier_discount = cat_name not in NO_TIER_DISCOUNT_CATS
 
         for item in cat_items:
+            seq += 1
             unit = item.get('单位', '')
             item_qty = item.get('数量', 1)
             is_per_store = '店' in unit
-            unit_price = get_item_unit_price(item)
+            unit_price_item = get_item_unit_price(item)
+            is_gift = unit_price_item == '赠送'
 
-            if unit_price == '赠送':
-                row = [
-                    Paragraph(_mixed_text(item.get('商品名称', '')), styles['CellStyle']),
-                    Paragraph(_mixed_text(unit), styles['CellStyleCenter']),
-                ] + [Paragraph(_mixed_text('赠送'), styles['CellStyleCenter']) for _ in tiers]
-            else:
-                row = [
-                    Paragraph(_mixed_text(item.get('商品名称', '')), styles['CellStyle']),
-                    Paragraph(_mixed_text(unit), styles['CellStyleCenter']),
-                ]
-                for ti, t in enumerate(tiers):
-                    d = Decimal(str(get_deal_price_factor(t))) if apply_tier_discount else Decimal('1')
-                    qty = Decimal(str(t['门店数'])) if is_per_store else Decimal(str(item_qty))
-                    actual = get_tier_unit_price(item, d) if apply_tier_discount else unit_price
-                    subtotal = (actual * qty).quantize(Decimal('0.00'), rounding=ROUND_HALF_UP)
-                    cat_tier_totals[ti] += subtotal
+            row = [
+                Paragraph(_mixed_text(str(seq)), styles['CellStyleCenter']),
+                Paragraph(_mixed_text(item.get('商品分类', '')), styles['CellStyle']),
+                Paragraph(_mixed_text(item.get('商品名称', '')), styles['CellStyle']),
+                Paragraph(_mixed_text(unit), styles['CellStyleCenter']),
+            ]
+            for tier in (tier_low, tier_high):
+                if is_gift:
+                    row.append(Paragraph(_mixed_text('赠送'), styles['CellStyleCenter']))
+                    row.append(Paragraph(_mixed_text('赠送'), styles['CellStyleCenter']))
+                else:
+                    d = Decimal(str(get_deal_price_factor(tier))) if apply_tier_discount else Decimal('1')
+                    actual_price = get_tier_unit_price(item, d) if apply_tier_discount else unit_price_item
+                    qty = Decimal(str(tier['门店数'])) if is_per_store else Decimal(str(item_qty))
+                    subtotal = (actual_price * qty).quantize(Decimal('1'), rounding=ROUND_HALF_UP)
+                    idx = 0 if tier is tier_low else 1
+                    cat_subtotals[idx] += subtotal
+                    row.append(Paragraph(_mixed_text(fmt_money(float(actual_price))), styles['CellStyleRight']))
                     row.append(Paragraph(_mixed_text(fmt_money(float(subtotal))), styles['CellStyleRight']))
+            row.append(Paragraph(_mixed_text(item.get('功能说明', '') or ''), styles['CellStyle']))
             table_data.append(row)
 
-        # 分类小计行
-        sub_row_idx = len(table_data)
-        subtotal_rows.append(sub_row_idx)
+        # 分类小计行（小计只出现在 F=index 5 和 H=index 7）
+        subtotal_rows.append(len(table_data))
         sub_row = [
             Paragraph('', styles['CellStyle']),
             Paragraph(_mixed_text('小计'), styles['CellStyleCenter']),
+            Paragraph('', styles['CellStyle']),
+            Paragraph('', styles['CellStyle']),
+            Paragraph('', styles['CellStyle']),
+            Paragraph(_mixed_text(fmt_money(float(cat_subtotals[0]))), styles['CellStyleRight']),
+            Paragraph('', styles['CellStyle']),
+            Paragraph(_mixed_text(fmt_money(float(cat_subtotals[1]))), styles['CellStyleRight']),
+            Paragraph('', styles['CellStyle']),
         ]
-        for ti, tot in enumerate(cat_tier_totals):
-            tier_grand_totals[ti] += tot
-            sub_row.append(Paragraph(_mixed_text(fmt_money(float(tot))), styles['CellStyleRight']))
+        grand_totals[0] += cat_subtotals[0]
+        grand_totals[1] += cat_subtotals[1]
         table_data.append(sub_row)
 
     # 合计行
     total_row = [
         Paragraph('', styles['CellStyle']),
         Paragraph(_mixed_text('合计'), styles['CNBold']),
-    ] + [Paragraph(_mixed_text(f'¥ {fmt_money(float(tot))}'), styles['CellStyleRight'])
-         for tot in tier_grand_totals]
+        Paragraph('', styles['CellStyle']),
+        Paragraph('', styles['CellStyle']),
+        Paragraph('', styles['CellStyle']),
+        Paragraph(_mixed_text(f'¥ {fmt_money(float(grand_totals[0]))}'), styles['CellStyleRight']),
+        Paragraph('', styles['CellStyle']),
+        Paragraph(_mixed_text(f'¥ {fmt_money(float(grand_totals[1]))}'), styles['CellStyleRight']),
+        Paragraph('', styles['CellStyle']),
+    ]
     table_data.append(total_row)
 
-    # 折算单店年费行
+    # 折算单店年费行：序号+分类列合并显示标签
+    per_store_values = []
+    for tier in (tier_low, tier_high):
+        stores = Decimal(str(tier['门店数']))
+        idx = 0 if tier is tier_low else 1
+        per_store = (grand_totals[idx] / stores).quantize(Decimal('1'), rounding=ROUND_HALF_UP)
+        per_store_values.append(per_store)
     unit_row = [
         Paragraph(_mixed_text('折算单店年费'), styles['CellStyle']),
         Paragraph('', styles['CellStyle']),
+        Paragraph('', styles['CellStyle']),
+        Paragraph('', styles['CellStyle']),
+        Paragraph('', styles['CellStyle']),
+        Paragraph(_mixed_text(fmt_money(float(per_store_values[0]))), styles['CellStyleRight']),
+        Paragraph('', styles['CellStyle']),
+        Paragraph(_mixed_text(fmt_money(float(per_store_values[1]))), styles['CellStyleRight']),
+        Paragraph('', styles['CellStyle']),
     ]
-    for ti, t in enumerate(tiers):
-        stores = Decimal(str(t['门店数']))
-        per_store = (tier_grand_totals[ti] / stores).quantize(Decimal('0.00'), rounding=ROUND_HALF_UP)
-        unit_row.append(Paragraph(_mixed_text(fmt_money(float(per_store))), styles['CellStyleRight']))
     table_data.append(unit_row)
+    per_store_row_idx = len(table_data) - 1
 
     t = Table(table_data, colWidths=col_widths, repeatRows=1)
-    n_rows = len(table_data)
     style_cmds = [
         ('BACKGROUND', (0, 0), (-1, 0), HEADER_BG),
         ('TEXTCOLOR', (0, 0), (-1, 0), HEADER_FG),
@@ -760,8 +784,11 @@ def _build_tiered_section(data, styles):
         ('LEFTPADDING', (0, 0), (-1, -1), 3),
         ('RIGHTPADDING', (0, 0), (-1, -1), 3),
         ('GRID', (0, 0), (-1, -1), 0.5, BORDER_COLOR),
-        ('BACKGROUND', (0, -1), (-1, -1), TOTAL_BG),
-        ('BACKGROUND', (0, -2), (-1, -2), TOTAL_BG),
+        # 折算单店年费行
+        ('SPAN', (0, per_store_row_idx), (4, per_store_row_idx)),
+        ('BACKGROUND', (0, per_store_row_idx), (-1, per_store_row_idx), TOTAL_BG),
+        # 合计行（在 per_store 行上一行）
+        ('BACKGROUND', (0, per_store_row_idx - 1), (-1, per_store_row_idx - 1), TOTAL_BG),
     ]
     for row_idx in cat_header_rows:
         style_cmds += [
