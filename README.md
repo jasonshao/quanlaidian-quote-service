@@ -8,17 +8,17 @@
 
 ---
 
-## 第一部分 — Agent 调用指南
+## 第一部分 — HTTP API 参考
 
-> 这一节写给调用本服务的 AI Agent（如 OpenClaw）。涵盖鉴权、API 端点、请求/响应结构和错误处理。
+> 本节是本服务对外暴露的 HTTP API 参考，主要供配套技能仓库 [`quanlaidian-quote-skills`](https://github.com/WoSai/quanlaidian-quote-skills) 集成调用。技能仓库封装了鉴权、表单装配、下载链接渲染等细节，是推荐的客户端；本节同时也作为其他直接集成方的契约文档。
 
 ### Base URL
 
 ```
-https://api.quanlaidian.com
+https://<your-api-host>
 ```
 
-UAT 阶段可能会通过 IP 直连（见运维方提供的实际地址）。客户端以 `QUOTE_API_URL` 环境变量配置，避免硬编码。
+实际地址由运维方提供（UAT 阶段可能通过 IP 直连）。技能仓库以 `QUOTE_API_URL` 环境变量读取，避免硬编码。
 
 ### 鉴权
 
@@ -140,14 +140,16 @@ python -m app.cli migrate-tokens-json          # 一次性：把旧 data/tokens.
 
 ---
 
-## 薄客户端（OpenClaw 技能）
+## 配套技能仓库
 
-配套技能仓库 [`quanlaidian-quote-skills`](https://github.com/jasonshao/quanlaidian-quote-skills) 提供薄客户端。配置两个环境变量即可调用：
+[`quanlaidian-quote-skills`](https://github.com/WoSai/quanlaidian-quote-skills) 是本服务唯一推荐的客户端。它以 Python 标准库实现零依赖调用，封装鉴权、表单提交、下载链接渲染。集成只需两个环境变量：
 
 ```bash
-export QUOTE_API_TOKEN=<your_token>
-export QUOTE_API_URL=https://<your-api-host>
+export QUOTE_API_TOKEN=<your_token>      # 向本服务管理员申请
+export QUOTE_API_URL=https://<your-api-host>/v1/quote
 ```
+
+安装、运行、自动升级等请直接参考技能仓库的 README。
 
 ---
 
@@ -284,7 +286,7 @@ Pydantic `BaseSettings` 从环境变量读取配置：
 ### 请求流水线
 
 ```
-OpenClaw agent
+quanlaidian-quote-skills
     │
     │ POST /v1/quote  {QuoteForm}
     │
