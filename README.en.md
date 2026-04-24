@@ -87,7 +87,7 @@ Health check — no auth required.
 
 ### GET /files/{token}/{filename}
 
-Download a generated file by its token-scoped URL. In production nginx serves this path directly from disk (`alias data/files/`); this route is a dev-mode fallback. Not called directly by clients — surface URLs come from `POST /v1/quote`'s `files[*].url` field.
+Download a generated file by its token-scoped URL — **active only when `QUOTE_STORAGE_BACKEND=local`**. In production nginx serves this path directly from disk (`alias data/files/`); this route is a dev-mode fallback. Not called directly by clients. When the OSS backend is enabled, `POST /v1/quote`'s `files[*].url` returns OSS pre-signed URLs directly (optionally rewritten to a CDN host via `QUOTE_OSS_PUBLIC_BASE_URL`) and this route is unused — see [File Storage Backends](#appstoragepy--file-storage-backends).
 
 ---
 
@@ -179,7 +179,7 @@ quanlaidian-quote-service/
 │   ├── auth.py                        # Bearer token verification
 │   ├── audit.py                       # Append-only JSONL audit logger
 │   ├── errors.py                      # Unified exception classes + handlers
-│   ├── storage.py                     # LocalDiskStorage (returns file_token)
+│   ├── storage.py                     # LocalDiskStorage / OssStorage (returns file_token or OSS signed URL)
 │   ├── cli.py                         # Token management CLI
 │   ├── api/
 │   │   ├── quote.py                   # POST /v1/quote
@@ -200,7 +200,7 @@ quanlaidian-quote-service/
 │   ├── quote.db                       # SQLite: quote / quote_render / approval / api_token
 │   ├── pricing_baseline.json          # Plaintext baseline (optional; obf preferred)
 │   ├── fonts/                         # CJK fonts for PDF rendering
-│   ├── files/                         # Generated files (7-day TTL)
+│   ├── files/                         # Locally generated files (local backend only, 7-day TTL)
 │   └── audit/                         # YYYY-MM-DD.jsonl audit logs
 ├── references/
 │   ├── product_catalog.md             # Product catalog (customer-facing list prices)
@@ -240,10 +240,26 @@ Pydantic `BaseSettings` reads all configuration from environment variables:
 |---|---|---|
 | `QUOTE_API_BASE_URL` | `https://<your-api-host>` | Public base URL (ask the administrator for the actual host) |
 | `QUOTE_DATA_ROOT` | `data` | Root directory for files, tokens, DB, audit |
-| `QUOTE_FILE_TTL_DAYS` | `7` | Days before generated files are eligible for cleanup |
+| `QUOTE_FILE_TTL_DAYS` | `7` | Generated-file lifetime (cleanup window for local disk, signed-URL expiry for OSS) |
 | `QUOTE_LOG_LEVEL` | `INFO` | Logging verbosity |
+| `QUOTE_STORAGE_BACKEND` | `local` | File storage backend: `local` or `oss` (Aliyun OSS) |
+| `QUOTE_OSS_ENDPOINT` | `oss-cn-hangzhou.aliyuncs.com` | OSS endpoint |
+| `QUOTE_OSS_BUCKET` | `private-wosai-statics` | OSS bucket name |
+| `QUOTE_OSS_PREFIX` | `quanlaidian-quote` | OSS object-key prefix |
+| `QUOTE_OSS_PUBLIC_BASE_URL` | `https://private-resource.shouqianba.com` | Host override for signed URLs (typically a CDN domain) |
+| `QUOTE_OSS_ACCESS_KEY_ID` | — | OSS access key ID (required when backend is `oss`) |
+| `QUOTE_OSS_ACCESS_KEY_SECRET` | — | OSS access key secret (required when backend is `oss`) |
 | `PRICING_BASELINE_KEY` | — | Decryption key for the `.obf` baseline (required in prod) |
 | `PRICING_BASELINE_STRICT` | `0` | Set to `1` to refuse plaintext fallback (recommended in prod) |
+
+#### `app/storage.py` — File Storage Backends
+
+PDF / XLSX / JSON files produced by `POST /v1/quote` are persisted through a `Storage` abstraction. `QUOTE_STORAGE_BACKEND` selects the implementation:
+
+- **`local` (default)** — `LocalDiskStorage`: files land at `data/files/<file_token>/<filename>`; response URLs point back at this service's `GET /files/{token}/{filename}`. In production nginx typically serves these directly via `alias data/files/`, and `ops/cron/cleanup-files.sh` deletes files older than `QUOTE_FILE_TTL_DAYS`.
+- **`oss`** — `OssStorage` (Aliyun OSS, `oss2` SDK): objects are uploaded under `<prefix>/<token>/<filename>`; response URLs are `bucket.sign_url`-generated pre-signed GETs (validity = `QUOTE_FILE_TTL_DAYS`). Setting `QUOTE_OSS_PUBLIC_BASE_URL` rewrites the host to a CDN or custom domain while preserving the signature. With the OSS backend, `GET /files/...` is no longer in the request path.
+
+Both backends persist the locator (`file_token` / `object_key`) on `quote_render.file_token`; `render_to_file_ref` dereferences it per backend type when building the response.
 
 #### `app/domain/pricing_baseline.py` — Runtime Baseline Codec
 
@@ -298,7 +314,7 @@ FastAPI → auth → schema → quote_service → pricing → render(pdf/xlsx/js
                                        (quote / quote_render / approval)
 ```
 
-The response `QuoteResponse` contains the preview plus three file URLs (pdf/xlsx/json). URLs are issued by `storage` with a 7-day TTL and are garbage-collected by cron after expiry.
+The response `QuoteResponse` contains the preview plus three file URLs (pdf/xlsx/json). URLs are issued by the `storage` backend: under `local` they point at this service's `/files/...`; under `oss` they are OSS pre-signed URLs (optionally rewritten to a CDN host via `QUOTE_OSS_PUBLIC_BASE_URL`). Both carry a `QUOTE_FILE_TTL_DAYS` TTL.
 
 ---
 
@@ -310,7 +326,8 @@ The response `QuoteResponse` contains the preview plus three file URLs (pdf/xlsx
 | Reverse proxy | nginx (TLS via certbot) |
 | Process manager | systemd (`ops/systemd/quanlaidian-quote.service`) |
 | Persistence | SQLite (`data/quote.db`) |
-| File cleanup | cron (`ops/cron/cleanup-files.sh`) |
+| File storage | Local disk (`local` backend) or Aliyun OSS (`oss` backend, `oss2` SDK) |
+| Local file cleanup | cron (`ops/cron/cleanup-files.sh`; OSS objects are expired via bucket lifecycle rules) |
 | Baseline maintenance | `ops/extract_baseline_from_xlsx.py` → `ops/obfuscate_baseline.py` (re-encrypt on pricing change) |
 
 See [`ops/runbook.md`](ops/runbook.md) for step-by-step first-time deployment, token provisioning, log access, rollback, and baseline rotation.
