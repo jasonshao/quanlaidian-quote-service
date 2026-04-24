@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest tests/ -x -q)",
+      "Bash(python3 -m pytest tests/ -x -q)",
+      "Bash(.venv/bin/pytest tests/ -x -q)",
+      "Bash(python3)",
+      "Bash(git remote *)",
+      "Bash(git -C /Users/sqb/ai/quanlaidian-quote-service remote get-url origin)",
+      "Bash(git -C /Users/sqb/ai/quanlaidian-quote-service log --oneline -3 origin/main)"
+    ]
+  }
+}

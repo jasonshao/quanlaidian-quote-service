@@ -11,8 +11,7 @@ from app.domain.pricing_baseline import (
 )
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
-# Use the product catalog from the old repo
-PRODUCT_CATALOG = Path("/Users/sqb/ai/quanlaidian-quotation-skill/references/product_catalog.md")
+PRODUCT_CATALOG = Path(__file__).resolve().parent.parent / "references" / "product_catalog.md"
 
 
 @pytest.fixture
