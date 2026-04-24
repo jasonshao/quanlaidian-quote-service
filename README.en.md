@@ -8,17 +8,17 @@ Server-side quotation service for the Quanlaidian product line. Owns the pricing
 
 ---
 
-## Part 1 — Agent Usage Guide
+## Part 1 — HTTP API Reference
 
-> This section is written for AI agents (such as OpenClaw) that call the quotation service. It covers authentication, API endpoints, request/response schema, and error handling.
+> This section documents the public HTTP API exposed by this service, primarily consumed by the companion skill repository [`quanlaidian-quote-skills`](https://github.com/WoSai/quanlaidian-quote-skills). The skill repo wraps authentication, form assembly, and download-link rendering — it is the recommended client. This section doubles as the contract for any direct integrators.
 
 ### Base URL
 
 ```
-https://api.quanlaidian.com
+https://<your-api-host>
 ```
 
-During UAT the service may be reachable via a direct IP (ask the ops contact for the current host). Clients should configure the URL via the `QUOTE_API_URL` environment variable rather than hardcoding it.
+The actual host is provided by the ops contact (during UAT the service may be reachable via a direct IP). The skill reads it from the `QUOTE_API_URL` environment variable rather than hardcoding it.
 
 ### Authentication
 
@@ -140,14 +140,16 @@ All errors share the same envelope:
 
 ---
 
-## Thin Client (OpenClaw Skill)
+## Companion Skill Repository
 
-The companion skill repository [`quanlaidian-quote-skills`](https://github.com/jasonshao/quanlaidian-quote-skills) provides a thin client. Configure two environment variables:
+[`quanlaidian-quote-skills`](https://github.com/WoSai/quanlaidian-quote-skills) is the recommended client for this service. Implemented against the Python 3 standard library with zero dependencies, it wraps authentication, form submission, and download-link rendering. Integration needs just two environment variables:
 
 ```bash
-export QUOTE_API_TOKEN=<your_token>
-export QUOTE_API_URL=https://api.quanlaidian.com
+export QUOTE_API_TOKEN=<your_token>       # request from this service's administrator
+export QUOTE_API_URL=https://<your-api-host>/v1/quote
 ```
+
+See the skill repo's own README for install, usage, and auto-update details.
 
 ---
 
@@ -236,7 +238,7 @@ Pydantic `BaseSettings` reads all configuration from environment variables:
 
 | Variable | Default | Description |
 |---|---|---|
-| `QUOTE_API_BASE_URL` | `https://api.quanlaidian.com` | Public base URL |
+| `QUOTE_API_BASE_URL` | `https://<your-api-host>` | Public base URL (ask the administrator for the actual host) |
 | `QUOTE_DATA_ROOT` | `data` | Root directory for files, tokens, DB, audit |
 | `QUOTE_FILE_TTL_DAYS` | `7` | Days before generated files are eligible for cleanup |
 | `QUOTE_LOG_LEVEL` | `INFO` | Logging verbosity |
@@ -284,7 +286,7 @@ Each successful quote request appends one JSON line to `data/audit/YYYY-MM-DD.js
 ### Request Flow
 
 ```
-OpenClaw agent
+quanlaidian-quote-skills
     │
     │ POST /v1/quote  {QuoteForm}
     │
