@@ -49,6 +49,44 @@ def test_with_delivery_center(empty_baseline):
     assert "配送中心" in item_names
 
 
+def test_hq_module_brand_program_default_qty_one(empty_baseline):
+    form = _load_form("form_full_meal_with_brand_program.json")
+    config = build_quotation_config(form, empty_baseline, PRODUCT_CATALOG)
+    brand_items = [
+        item for item in config["报价项目"]
+        if item["商品名称"] == "商家小程序号-品牌点位"
+    ]
+    assert len(brand_items) == 1
+    assert brand_items[0]["数量"] == 1
+    assert brand_items[0]["模块分类"] == "总部模块"
+
+
+def test_hq_module_scrm_default_qty_one(empty_baseline):
+    form = _load_form("form_light_meal_with_scrm.json")
+    config = build_quotation_config(form, empty_baseline, PRODUCT_CATALOG)
+    scrm_items = [
+        item for item in config["报价项目"]
+        if item["商品名称"] == "企业微信SCRM"
+    ]
+    assert len(scrm_items) == 1
+    assert scrm_items[0]["数量"] == 1
+    assert scrm_items[0]["模块分类"] == "总部模块"
+
+
+def test_hq_module_unsupported_still_rejects(empty_baseline):
+    form = _load_form("form_full_meal_with_brand_program.json")
+    form["总部模块"] = ["不存在的模块"]
+    with pytest.raises(ValueError, match="总部模块不支持"):
+        build_quotation_config(form, empty_baseline, PRODUCT_CATALOG)
+
+
+def test_hq_module_delivery_center_still_requires_quantity(empty_baseline):
+    form = _load_form("form_with_delivery_center.json")
+    del form["配送中心数量"]
+    with pytest.raises(ValueError, match="配送中心数量"):
+        build_quotation_config(form, empty_baseline, PRODUCT_CATALOG)
+
+
 def test_301_stores_rejected(empty_baseline):
     """边界搬:31+ 现在走大客户段(tier 对比),只有 301+ 拒绝。"""
     form = _load_form("form_light_meal_5_stores.json")
