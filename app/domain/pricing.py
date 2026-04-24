@@ -40,6 +40,21 @@ PROTECTED_PRODUCT_NAMES = {
     "商管接口",
 }
 
+# 总部模块两类：
+# - QUANTITY_FIELDS：数量必须由前端字段显式给出且 > 0（中央配送、生产加工中心
+#   通常按"建几个"卖）。
+# - DEFAULT_QTY_ONE：每勾选一次默认数量=1（按号/品牌为单位售卖，前端不再额外
+#   询问数量）。新增同类商品时把名字加进对应集合即可，无需改 schema。
+HQ_MODULE_QUANTITY_FIELDS = {
+    "配送中心": "配送中心数量",
+    "生产加工": "生产加工中心数量",
+}
+HQ_MODULE_DEFAULT_QTY_ONE = {
+    "商家小程序号",
+    "商家小程序号-品牌点位",
+    "企业微信SCRM",
+}
+
 
 def is_protected_product(product_name):
     return any(keyword in str(product_name) for keyword in PROTECTED_PRODUCT_NAMES)
@@ -648,18 +663,15 @@ def validate_form(form, product_index, route_strategy):
 
     headquarter_modules = form.get("总部模块", [])
     if headquarter_modules:
-        quantity_field_map = {
-            "配送中心": "配送中心数量",
-            "生产加工": "生产加工中心数量",
-        }
         for module_name in headquarter_modules:
-            quantity_field = quantity_field_map.get(module_name)
-            if quantity_field is None:
+            quantity_field = HQ_MODULE_QUANTITY_FIELDS.get(module_name)
+            if quantity_field is not None:
+                if quantity_field not in form:
+                    raise ValueError(f"勾选总部模块后必须填写 {quantity_field}")
+                if int(form.get(quantity_field, 0)) <= 0:
+                    raise ValueError(f"勾选总部模块后 {quantity_field} 必须大于 0")
+            elif module_name not in HQ_MODULE_DEFAULT_QTY_ONE:
                 raise ValueError(f"总部模块不支持: {module_name}")
-            if quantity_field not in form:
-                raise ValueError(f"勾选总部模块后必须填写 {quantity_field}")
-            if int(form.get(quantity_field, 0)) <= 0:
-                raise ValueError(f"勾选总部模块后 {quantity_field} 必须大于 0")
             lookup_product(product_index, module_name, meal_type=meal_type, group="总部模块")
     for field in ("配送中心数量", "生产加工中心数量"):
         if field in form and int(form[field]) < 0:
@@ -967,33 +979,16 @@ def build_quotation_config(form: dict, baseline: dict, product_catalog_path: Pat
         standard_price, cost_price, _ = resolve_product_pricing(module, meal_type, baseline_index)
         items.append(build_quote_item(module, standard_price, cost_price, store_count, deal_price_factor, category, "门店增值模块", description=_desc_for(module)))
 
-    # 电子发票接口 → 自动追加"电子发票-税号"一行（issue #8 的联动规则）。
-    # 数量取 form["税号数量"]，缺失/非法时默认 1。
-    if "电子发票接口" in form.get("门店增值模块", []):
-        tax_id_product = lookup_product(product_index, "电子发票-税号", meal_type=meal_type, group="门店增值模块")
-        tax_id_standard_price, tax_id_cost_price, _ = resolve_product_pricing(tax_id_product, meal_type, baseline_index)
-        try:
-            tax_id_qty = int(form.get("税号数量", 1) or 1)
-        except (TypeError, ValueError):
-            tax_id_qty = 1
-        if tax_id_qty < 1:
-            tax_id_qty = 1
-        tax_id_category = "保护类商品" if is_protected_product(tax_id_product["name"]) else "增值模块"
-        items.append(build_quote_item(
-            tax_id_product, tax_id_standard_price, tax_id_cost_price,
-            tax_id_qty, deal_price_factor,
-            tax_id_category, "门店增值模块",
-            description=_desc_for(tax_id_product),
-        ))
-
     for module_name in form.get("总部模块", []):
-        quantity_field = {
-            "配送中心": "配送中心数量",
-            "生产加工": "生产加工中心数量",
-        }.get(module_name)
-        quantity = int(form.get(quantity_field, 0)) if quantity_field else 0
-        if quantity <= 0:
-            continue
+        quantity_field = HQ_MODULE_QUANTITY_FIELDS.get(module_name)
+        if quantity_field is not None:
+            quantity = int(form.get(quantity_field, 0))
+            if quantity <= 0:
+                continue
+        elif module_name in HQ_MODULE_DEFAULT_QTY_ONE:
+            quantity = 1
+        else:
+            raise ValueError(f"总部模块不支持: {module_name}")
         module = lookup_product(product_index, module_name, meal_type=meal_type, group="总部模块")
         category = "保护类商品" if is_protected_product(module["name"]) else "总部模块"
         standard_price, cost_price, _ = resolve_product_pricing(module, meal_type, baseline_index)
