@@ -750,27 +750,7 @@ def _build_tiered_section(data, styles):
         Paragraph('', styles['CellStyle']),
     ]
     table_data.append(total_row)
-
-    # 折算单店年费行：序号+分类列合并显示标签
-    per_store_values = []
-    for tier in (tier_low, tier_high):
-        stores = Decimal(str(tier['门店数']))
-        idx = 0 if tier is tier_low else 1
-        per_store = (grand_totals[idx] / stores).quantize(Decimal('1'), rounding=ROUND_HALF_UP)
-        per_store_values.append(per_store)
-    unit_row = [
-        Paragraph(_mixed_text('折算单店年费'), styles['CellStyle']),
-        Paragraph('', styles['CellStyle']),
-        Paragraph('', styles['CellStyle']),
-        Paragraph('', styles['CellStyle']),
-        Paragraph('', styles['CellStyle']),
-        Paragraph(_mixed_text(fmt_money(float(per_store_values[0]))), styles['CellStyleRight']),
-        Paragraph('', styles['CellStyle']),
-        Paragraph(_mixed_text(fmt_money(float(per_store_values[1]))), styles['CellStyleRight']),
-        Paragraph('', styles['CellStyle']),
-    ]
-    table_data.append(unit_row)
-    per_store_row_idx = len(table_data) - 1
+    total_row_idx = len(table_data) - 1
 
     t = Table(table_data, colWidths=col_widths, repeatRows=1)
     style_cmds = [
@@ -784,11 +764,7 @@ def _build_tiered_section(data, styles):
         ('LEFTPADDING', (0, 0), (-1, -1), 3),
         ('RIGHTPADDING', (0, 0), (-1, -1), 3),
         ('GRID', (0, 0), (-1, -1), 0.5, BORDER_COLOR),
-        # 折算单店年费行
-        ('SPAN', (0, per_store_row_idx), (4, per_store_row_idx)),
-        ('BACKGROUND', (0, per_store_row_idx), (-1, per_store_row_idx), TOTAL_BG),
-        # 合计行（在 per_store 行上一行）
-        ('BACKGROUND', (0, per_store_row_idx - 1), (-1, per_store_row_idx - 1), TOTAL_BG),
+        ('BACKGROUND', (0, total_row_idx), (-1, total_row_idx), TOTAL_BG),
     ]
     for row_idx in cat_header_rows:
         style_cmds += [
