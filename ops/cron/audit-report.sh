@@ -2,24 +2,23 @@
 # 全来店报价服务 — 每日调用统计报告
 # 每日凌晨 6:00 定时运行，分析过去 24 小时的 API 调用数据并生成 Markdown 报告。
 #
-# 报告输出路径: ${QUOTE_DATA_ROOT:-/opt/quanlaidian-quote/data}/reports/audit-report-YYYY-MM-DD.md
-# 日志输出到 stdout，由 cron 捕获写入 /var/log/quanlaidian-audit-report.log
-#
-# 安装方法（复制到 /etc/cron.d/ 或手动添加到 crontab）:
-#   0 6 * * *  deploy /opt/quanlaidian-quote/.venv/bin/python /opt/quanlaidian-quote/ops/audit_report.py >> /var/log/quanlaidian-audit-report.log 2>&1
-#
+# 报告输出路径: ${QUOTE_DATA_ROOT:-<repo>/data}/reports/audit-report-YYYY-MM-DD.md
+# 日志: 由调用方的 cron 行重定向，本脚本只输出到 stdout/stderr。
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-DATA_ROOT="${QUOTE_DATA_ROOT:-/opt/quanlaidian-quote/data}"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-VENV_PYTHON="${VIRTUAL_ENV:-/opt/quanlaidian-quote/.venv/bin/python}"
-if [ ! -x "$VENV_PYTHON" ]; then
-    VENV_PYTHON="python3"
+# audit_report.py 内 DATA_ROOT 默认 Path("data") 是相对路径，必须先 cd 到仓库根
+cd "$PROJECT_ROOT"
+
+# 选 Python：优先仓内 venv，其次外层激活的 venv，最后回退 python3
+if [ -x "$PROJECT_ROOT/.venv/bin/python" ]; then
+    PYTHON="$PROJECT_ROOT/.venv/bin/python"
+elif [ -n "${VIRTUAL_ENV:-}" ] && [ -x "$VIRTUAL_ENV/bin/python" ]; then
+    PYTHON="$VIRTUAL_ENV/bin/python"
+else
+    PYTHON="python3"
 fi
 
-exec "$VENV_PYTHON" \
-    "$PROJECT_ROOT/ops/audit_report.py" \
-    --hours 24 \
-    --output both
+exec "$PYTHON" "$PROJECT_ROOT/ops/audit_report.py" --hours 24 --output both

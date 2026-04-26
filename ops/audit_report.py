@@ -7,8 +7,7 @@
     python ops/audit_report.py
     python ops/audit_report.py --hours 48
 
-生产环境 cron 配置:
-    0 6 * * * cd /opt/quanlaidian-quote && /opt/quanlaidian-quote/.venv/bin/python ops/audit_report.py >> data/logs/audit_report.log 2>&1
+生产环境 cron 配置: 见 ops/cron/crontab.example
 """
 
 import argparse
@@ -153,7 +152,7 @@ def generate_report(records: list[dict], hours: int = 24) -> str:
     lines = []
     lines.append("# 全来店报价服务 · 每日调用报告")
     lines.append("")
-    lines.append(f"**统计周期**: {(cutoff + timedelta(hours=0)).strftime('%Y-%m-%d %H:%M')} ~ {now.strftime('%Y-%m-%d %H:%M')} (UTC+0)")
+    lines.append(f"**统计周期**: {cutoff.strftime('%Y-%m-%d %H:%M')} ~ {now.strftime('%Y-%m-%d %H:%M')} (UTC+0)")
     lines.append(f"**生成时间**: {now.strftime('%Y-%m-%d %H:%M:%S')} (UTC+0)")
     lines.append(f"**脚本版本**: v1.0.0")
     lines.append("")

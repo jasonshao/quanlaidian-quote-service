@@ -1,24 +1,30 @@
-# 全来店报价服务 — Crontab 配置
+# 全来店报价服务 — Crontab 配置（模板）
 #
-# 安装方式（任选其一）:
-#   方式 A（复制到 /etc/cron.d/）:
-#     cp ops/cron/crontab.example /etc/cron.d/quanlaidian-quote
+# 安装步骤:
+#   1. 复制本文件到 /etc/cron.d/quanlaidian-quote
+#        sudo cp ops/cron/crontab.example /etc/cron.d/quanlaidian-quote
+#   2. 把 <PROJECT_ROOT> 替换为实际部署路径，例如:
+#        /root/ai/quanlaidian-quote-service
+#        /opt/quanlaidian-quote
+#      （/etc/cron.d/ 中不能用 ~ 或 $HOME，必须绝对路径）
+#   3. 把 <USER> 替换为运行用户（通常是 root 或 deploy）
+#   4. 提前创建并赋写权限:
+#        sudo touch /var/log/quanlaidian-audit-report.log /var/log/quanlaidian-cleanup.log
+#        sudo chown <USER>:<USER> /var/log/quanlaidian-*.log
+#   5. /etc/cron.d/ 文件需 644 权限、属主 root:
+#        sudo chmod 644 /etc/cron.d/quanlaidian-quote
 #
-#   方式 B（追加到用户 crontab）:
-#     cat ops/cron/crontab.example | sed 's/^MAILTO.*//' | crontab -u deploy -
-#
-# 注意事项:
-#   - 请根据实际部署路径修改 /opt/quanlaidian-quote 为真实路径
-#   - 请根据虚拟环境实际路径修改 .venv/bin/python
-#   - audit-report.sh 需要 QUOTE_DATA_ROOT 环境变量，参见脚本内默认值
-#   - 日志文件需要提前创建并赋予写权限
+# 备注:
+#   - audit-report.sh / cleanup-files.sh 自带路径自适应（基于脚本所在目录解析仓库根），
+#     无需在 crontab 里再传 QUOTE_DATA_ROOT。
+#   - cron 默认 PATH 极窄，下方显式声明。
 
 SHELL=/bin/bash
 PATH=/usr/local/bin:/usr/bin:/bin
 MAILTO=""
 
 # 每日凌晨 6:00 运行调用统计报告
-0 6 * * * deploy /opt/quanlaidian-quote/.venv/bin/python /opt/quanlaidian-quote/ops/audit_report.py >> /var/log/quanlaidian-audit-report.log 2>&1
+0 6 * * * <USER> <PROJECT_ROOT>/ops/cron/audit-report.sh >> /var/log/quanlaidian-audit-report.log 2>&1
 
 # 每日凌晨 6:10 清理过期文件（保留最近 7 天）
-10 6 * * * deploy /opt/quanlaidian-quote/ops/cron/cleanup-files.sh >> /var/log/quanlaidian-cleanup.log 2>&1
+10 6 * * * <USER> <PROJECT_ROOT>/ops/cron/cleanup-files.sh >> /var/log/quanlaidian-cleanup.log 2>&1
