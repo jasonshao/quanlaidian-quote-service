@@ -204,6 +204,83 @@ def test_xlsx_tiered_sheet_9_column_layout(empty_baseline):
     assert all(v != "折算单店年费" for v in first_col_last)
 
 
+def test_xlsx_no_floating_watermark_image(empty_baseline):
+    """Regression: the 2000×2000 watermark must not be a floating image.
+
+    Floating images intercept double-click events and block users from
+    entering cell-edit mode. The watermark is now embedded as a page-header
+    image instead, which is invisible to mouse hit-testing in Normal view.
+    Logo images (86×26 and 73×26) are still floating — they don't overlap
+    data cells, so they don't block editing.
+    """
+    import openpyxl, io
+    config = _build_config_with_descriptions("form_light_meal_5_stores.json", empty_baseline)
+    xlsx_bytes = render_xlsx(config)
+    wb = openpyxl.load_workbook(io.BytesIO(xlsx_bytes))
+    for name in wb.sheetnames:
+        ws = wb[name]
+        large_imgs = [im for im in getattr(ws, "_images", [])
+                      if (getattr(im, "width", 0) or 0) >= 500]
+        assert not large_imgs, (
+            f"{name}: unexpected large floating image(s) found "
+            f"(would block cell-edit double-clicks): "
+            f"{[(im.width, im.height) for im in large_imgs]}"
+        )
+
+
+def test_xlsx_header_watermark_present(empty_baseline):
+    """Every sheet should declare an odd-page header image and reference
+    a shared media part containing the watermark PNG.
+    """
+    import io, zipfile
+    config = _build_config_with_descriptions("form_full_meal_10_stores.json", empty_baseline)
+    config["门店数量"] = 100
+    from app.domain.pricing import build_tier_config
+    config["阶梯配置"] = build_tier_config(True, "正餐", 100)
+    config["pricing_info"]["route_strategy"] = "large-segment"
+    xlsx_bytes = render_xlsx(config)
+
+    with zipfile.ZipFile(io.BytesIO(xlsx_bytes)) as zf:
+        names = set(zf.namelist())
+        assert "xl/media/imageHF1.png" in names, (
+            "shared header watermark image missing"
+        )
+        assert len(zf.read("xl/media/imageHF1.png")) > 1000
+
+        ct = zf.read("[Content_Types].xml").decode("utf-8")
+        assert 'Extension="vml"' in ct
+        assert 'Extension="png"' in ct
+
+        sheet_paths = sorted(
+            n for n in names
+            if n.startswith("xl/worksheets/sheet") and n.endswith(".xml")
+        )
+        assert sheet_paths, "no worksheets found"
+        for sheet in sheet_paths:
+            xml = zf.read(sheet).decode("utf-8")
+            assert "<oddHeader>" in xml and "&amp;G" in xml, (
+                f"{sheet}: expected <oddHeader> with &G picture marker"
+            )
+            assert "<legacyDrawingHF" in xml, (
+                f"{sheet}: expected <legacyDrawingHF> reference"
+            )
+
+
+def test_xlsx_opens_clean_in_openpyxl(empty_baseline):
+    """The post-processed xlsx must remain readable by openpyxl with no
+    parse errors. This catches malformed OOXML — broken namespace prefixes,
+    misplaced elements, etc. — that would otherwise only surface in Excel.
+    """
+    import openpyxl, io
+    config = _build_config_with_descriptions("form_light_meal_5_stores.json", empty_baseline)
+    xlsx_bytes = render_xlsx(config)
+    wb = openpyxl.load_workbook(io.BytesIO(xlsx_bytes))
+    assert wb.sheetnames
+    buf = io.BytesIO()
+    wb.save(buf)
+    assert len(buf.getvalue()) > 1000
+
+
 def test_pdf_package_expanded_sub_modules(empty_baseline):
     try:
         import fitz

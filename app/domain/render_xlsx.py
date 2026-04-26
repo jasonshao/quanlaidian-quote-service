@@ -112,40 +112,6 @@ def _generate_watermark_image(quote_no: str, quote_date: str) -> bytes:
     return buf.getvalue()
 
 
-def _xl_add_watermark_background(ws, quote_no: str, quote_date: str):
-    """为 Excel 工作表添加浅色斜向水印背景图（半透明 PNG）。
-
-    水印效果：
-    - 中灰 (136,136,136)，透明度 30%
-    - 斜 -30° 网格平铺
-    - 2000×2000 PNG 浮动锚定在 sheet 左上 (0,0)，覆盖正常可视区域
-    """
-    png_bytes = _generate_watermark_image(quote_no, quote_date)
-    if not png_bytes:
-        return
-
-    try:
-        from io import BytesIO
-        from openpyxl.drawing.image import Image as XLImage
-        from openpyxl.drawing.spreadsheet_drawing import AbsoluteAnchor
-        from openpyxl.drawing.xdr import XDRPoint2D, XDRPositiveSize2D
-        from openpyxl.utils.units import pixels_to_EMU
-
-        buf = BytesIO(png_bytes)
-        img = XLImage(buf)
-        # 铺满整页：大尺寸 + AbsoluteAnchor 定位到 (0,0)
-        # 使用足够大的尺寸让它覆盖整个 sheet 可视区域
-        img.width = 2000
-        img.height = 2000
-        pos = XDRPoint2D(x=pixels_to_EMU(0), y=pixels_to_EMU(0))
-        ext = XDRPositiveSize2D(cx=pixels_to_EMU(2000), cy=pixels_to_EMU(2000))
-        img.anchor = AbsoluteAnchor(pos=pos, ext=ext)
-        ws.add_image(img)
-    except Exception:
-        # 水印失败不影响主流程，静默跳过
-        pass
-
-
 # ============================================================
 # Header logos — inserted at top-left of every sheet's row 1.
 # Caller MUST leave row 1 free (content starts from row 2).
@@ -492,11 +458,6 @@ def _generate_xlsx_standard(data):
 
     _xl_set_col_widths(ws)
 
-    # ── 水印背景（最底层，先添加，再叠内容）──
-    quote_no = data.get('报价编号', gen_quote_number())
-    quote_date = data.get('报价日期', datetime.now().strftime('%Y-%m-%d'))
-    _xl_add_watermark_background(ws, quote_no, quote_date)
-
     # ── Logo 行（行1）──
     _xl_add_header_logos(ws)
 
@@ -640,7 +601,6 @@ def _generate_xlsx_custom(data):
     ws_cover.sheet_view.showGridLines = False
     # 与明细表 sheet 统一列宽（8 列 共 141 单位）
     _xl_set_col_widths(ws_cover)
-    _xl_add_watermark_background(ws_cover, quote_no, quote_date)
 
     _xl_add_header_logos(ws_cover)
     ws_cover.merge_cells('A2:H2')
@@ -724,7 +684,6 @@ def _generate_xlsx_custom(data):
         ws_merged = wb.create_sheet('门店软件与增值')
         ws_merged.sheet_view.showGridLines = False
         _xl_set_col_widths(ws_merged)
-        _xl_add_watermark_background(ws_merged, quote_no, quote_date)
 
         _xl_add_header_logos(ws_merged)
         ws_merged.merge_cells('A2:H2')
@@ -760,7 +719,6 @@ def _generate_xlsx_custom(data):
         ws = wb.create_sheet('总部模块')
         ws.sheet_view.showGridLines = False
         _xl_set_col_widths(ws)
-        _xl_add_watermark_background(ws, quote_no, quote_date)
         _xl_add_header_logos(ws)
         ws.merge_cells('A2:H2')
         c = ws.cell(row=2, column=1, value='总部模块')
@@ -777,7 +735,6 @@ def _generate_xlsx_custom(data):
         ws = wb.create_sheet('实施服务')
         ws.sheet_view.showGridLines = False
         _xl_set_col_widths(ws)
-        _xl_add_watermark_background(ws, quote_no, quote_date)
         _xl_add_header_logos(ws)
         ws.merge_cells('A2:H2')
         c = ws.cell(row=2, column=1, value='实施服务')
@@ -840,11 +797,6 @@ def _xl_add_tiered_sheet(wb, data):
 
     ws = wb.create_sheet('阶梯报价参考')
     ws.sheet_view.showGridLines = False
-
-    # 水印
-    quote_no = data.get('报价编号', gen_quote_number())
-    quote_date = data.get('报价日期', datetime.now().strftime('%Y-%m-%d'))
-    _xl_add_watermark_background(ws, quote_no, quote_date)
 
     items = data.get('报价项目', [])
     tier_low, tier_high = tiers[0], tiers[1]
@@ -1013,7 +965,12 @@ def _xl_add_tiered_sheet(wb, data):
 # 公共入口
 # ============================================================
 def render_xlsx(config: dict) -> bytes:
-    """Generate XLSX quotation from config dict. Returns XLSX bytes."""
+    """Generate XLSX quotation from config dict. Returns XLSX bytes.
+
+    Watermark is injected as a page-header image (visible in Page Layout view
+    and on print, but NOT in Normal edit view) — this avoids the AbsoluteAnchor
+    floating image intercepting double-click cell-edit events.
+    """
     if config.get("pricing_info", {}).get("route_strategy") == "small-segment":
         wb = _generate_xlsx_standard(config)
     else:
@@ -1022,4 +979,12 @@ def render_xlsx(config: dict) -> bytes:
         _xl_add_tiered_sheet(wb, config)
     buf = BytesIO()
     wb.save(buf)
-    return buf.getvalue()
+    xlsx_bytes = buf.getvalue()
+
+    quote_no = config.get('报价编号') or gen_quote_number()
+    quote_date = config.get('报价日期') or datetime.now().strftime('%Y年%m月%d日')
+    png = _generate_watermark_image(quote_no, quote_date)
+    if png:
+        from app.domain.render_xlsx_header_watermark import inject_header_watermark
+        xlsx_bytes = inject_header_watermark(xlsx_bytes, png)
+    return xlsx_bytes
