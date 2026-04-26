@@ -3,7 +3,7 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    api_base_url: str = "https://api.quanlaidian.com"
+    api_base_url: str = "https://<your-api-host>"
     data_root: Path = Path("data")
     file_ttl_days: int = 7
     storage_backend: str = "local"
