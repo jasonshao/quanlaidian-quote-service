@@ -87,7 +87,7 @@ python -m app.cli migrate-tokens-json          # 一次性：把旧 data/tokens.
 
 ### GET /files/{token}/{filename}
 
-按 token 限定的 URL 下载已生成的文件。生产环境由 nginx 直接从磁盘提供（`alias data/files/`），此路由仅作为开发环境兜底。不是销售/客户端直接调用的接口，通常由 `POST /v1/quote` 响应里的 `files[*].url` 引导访问。
+按 token 限定的 URL 下载已生成的文件——**仅在 `QUOTE_STORAGE_BACKEND=local` 时生效**。生产环境由 nginx 直接从磁盘提供（`alias data/files/`），此路由仅作为开发环境兜底。切换到 OSS 后端后，`POST /v1/quote` 返回的 `files[*].url` 直接是 OSS 签名 URL（可选经由 `QUOTE_OSS_PUBLIC_BASE_URL` 改写为 CDN 域名），不再经过本服务——详见 [文件存储后端](#文件存储后端)。
 
 ---
 
@@ -179,7 +179,7 @@ quanlaidian-quote-service/
 │   ├── auth.py                        # Bearer token 校验
 │   ├── audit.py                       # 追加式 JSONL 审计
 │   ├── errors.py                      # 统一异常类 + 处理器
-│   ├── storage.py                     # LocalDiskStorage（返回 file_token）
+│   ├── storage.py                     # LocalDiskStorage / OssStorage（返回 file_token 或 OSS signed URL）
 │   ├── cli.py                         # Token 管理 CLI
 │   ├── api/
 │   │   ├── quote.py                   # POST /v1/quote
@@ -200,7 +200,7 @@ quanlaidian-quote-service/
 │   ├── quote.db                       # SQLite: quote / quote_render / approval / api_token
 │   ├── pricing_baseline.json          # 明文基线（可选，obf 作为首选）
 │   ├── fonts/                         # CJK 字体（PDF 渲染用）
-│   ├── files/                         # 生成的文件（7 天 TTL）
+│   ├── files/                         # 本地生成的文件（仅 local 后端，7 天 TTL）
 │   └── audit/                         # YYYY-MM-DD.jsonl 审计
 ├── references/
 │   ├── product_catalog.md             # 产品目录（对客标价）
@@ -240,10 +240,26 @@ Pydantic `BaseSettings` 从环境变量读取配置：
 |---|---|---|
 | `QUOTE_API_BASE_URL` | `https://<your-api-host>` | 公开 base URL（请向管理员获取实际地址） |
 | `QUOTE_DATA_ROOT` | `data` | 文件、token、DB、审计的根目录 |
-| `QUOTE_FILE_TTL_DAYS` | `7` | 生成文件的过期天数 |
+| `QUOTE_FILE_TTL_DAYS` | `7` | 生成文件的过期天数（本地盘为清理周期，OSS 为签名 URL 过期） |
 | `QUOTE_LOG_LEVEL` | `INFO` | 日志级别 |
+| `QUOTE_STORAGE_BACKEND` | `local` | 文件存储后端：`local` 或 `oss`（阿里云 OSS） |
+| `QUOTE_OSS_ENDPOINT` | `oss-cn-hangzhou.aliyuncs.com` | OSS endpoint |
+| `QUOTE_OSS_BUCKET` | `private-wosai-statics` | OSS bucket 名 |
+| `QUOTE_OSS_PREFIX` | `quanlaidian-quote` | OSS 对象 key 前缀 |
+| `QUOTE_OSS_PUBLIC_BASE_URL` | `https://private-resource.shouqianba.com` | 签名 URL host 改写（通常指向 CDN）|
+| `QUOTE_OSS_ACCESS_KEY_ID` | — | OSS AK（`oss` 后端必填）|
+| `QUOTE_OSS_ACCESS_KEY_SECRET` | — | OSS SK（`oss` 后端必填）|
 | `PRICING_BASELINE_KEY` | — | `.obf` 基线解密密钥（生产必填）|
 | `PRICING_BASELINE_STRICT` | `0` | 设为 `1` 时拒绝明文回退，只走 obf+key（生产推荐）|
+
+#### `app/storage.py` — 文件存储后端
+
+`POST /v1/quote` 生成的 PDF / XLSX / JSON 文件通过 `Storage` 抽象落地。由 `QUOTE_STORAGE_BACKEND` 切换：
+
+- **`local`（默认）** — `LocalDiskStorage`：文件写入 `data/files/<file_token>/<filename>`，响应里的 URL 指向本服务的 `GET /files/{token}/{filename}`。生产一般由 nginx `alias data/files/` 直出，`QUOTE_FILE_TTL_DAYS` 后由 `ops/cron/cleanup-files.sh` 清理。
+- **`oss`** — `OssStorage`（阿里云 OSS，`oss2` SDK）：对象写入 `<prefix>/<token>/<filename>` key，响应里的 URL 是 `bucket.sign_url` 生成的签名 URL（有效期 = `QUOTE_FILE_TTL_DAYS`）。配置 `QUOTE_OSS_PUBLIC_BASE_URL` 可把 host 改写为 CDN / 自定义域，签名部分保留。`oss` 后端下 `GET /files/...` 路由不再被调用。
+
+两种后端都把定位凭据（`file_token` / `object_key`）持久化到 `quote_render.file_token`，`render_to_file_ref` 在返回时按后端类型解引用。
 
 #### `app/domain/pricing_baseline.py` — 基线运行时解码
 
@@ -298,7 +314,7 @@ FastAPI → auth → schema → quote_service → pricing → render(pdf/xlsx/js
                                        (quote / quote_render / approval)
 ```
 
-响应 `QuoteResponse` 含 preview + 3 个文件 URL（pdf/xlsx/json），URL 由 `storage` 发放，带 7 天 TTL，到期由 cron 清理。
+响应 `QuoteResponse` 含 preview + 3 个文件 URL（pdf/xlsx/json），URL 由 `storage` 后端发放：`local` 后端下指向本服务的 `/files/...`，`oss` 后端下是 OSS 签名 URL（可经 `QUOTE_OSS_PUBLIC_BASE_URL` 改写为 CDN 域名）。两者都带 `QUOTE_FILE_TTL_DAYS` 天 TTL。
 
 ---
 
@@ -310,7 +326,8 @@ FastAPI → auth → schema → quote_service → pricing → render(pdf/xlsx/js
 | 反向代理 | nginx（TLS 用 certbot）|
 | 进程管理 | systemd（`ops/systemd/quanlaidian-quote.service`）|
 | 持久化 | SQLite（`data/quote.db`）|
-| 文件清理 | cron（`ops/cron/cleanup-files.sh`）|
+| 文件存储 | 本地盘（`local` 后端）或阿里云 OSS（`oss` 后端，`oss2` SDK）|
+| 本地文件清理 | cron（`ops/cron/cleanup-files.sh`；OSS 后端由生命周期规则自行回收）|
 | 基线维护 | `ops/extract_baseline_from_xlsx.py` → `ops/obfuscate_baseline.py`（调价后重加密）|
 
 详细的首次部署、token 发放、日志查看、回滚、基线轮换见 [`ops/runbook.md`](ops/runbook.md)。
