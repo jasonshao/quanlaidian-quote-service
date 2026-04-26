@@ -4,7 +4,7 @@
 
 Server-side quotation service for the Quanlaidian product line. Owns the pricing algorithm, baseline data, PDF/XLSX rendering, file storage, and audit logging — turning every client into a thin HTTP wrapper.
 
-**Version:** 1.0.0　**Runtime:** Python 3.10+ · FastAPI · uvicorn · SQLite
+**Version:** see [`VERSION`](VERSION) and [`CHANGELOG.md`](CHANGELOG.md); the live version is reported by `GET /healthz`. **Runtime:** Python 3.10+ · FastAPI · uvicorn · SQLite
 
 ---
 
@@ -82,8 +82,10 @@ Idempotent on `(org, canonical form)`: replaying the same form from the same org
 Health check — no auth required.
 
 ```json
-{ "status": "ok", "pricing_version": "small-segment-v2.3" }
+{ "status": "ok", "service_version": "1.1.0", "pricing_version": "small-segment-v2.3" }
 ```
+
+`service_version` is read from the repo-root [`VERSION`](VERSION) file and is the single source of truth for "what's deployed on prod right now". `pricing_version` is the pricing-algorithm version, which varies by `route_strategy` (also surfaced in the [`/v1/quote`](#post-v1quote--price--render-pdfxlsxjson) response).
 
 ### GET /files/{token}/{filename}
 
@@ -368,3 +370,30 @@ python -m app.cli revoke-token --id tok_xxxxxxxx
 python -m app.cli add-token --org staging --expires-in 30d   # custom expiry
 python -m app.cli add-token --org admin --no-expire          # never expires
 ```
+
+---
+
+## Releases & Changelog
+
+This repository follows [SemVer](https://semver.org/) (`MAJOR.MINOR.PATCH`). The version is recorded in the repo-root [`VERSION`](VERSION) file and kept in sync with `[project].version` in [`pyproject.toml`](pyproject.toml) (enforced by `tests/test_version.py`). The full change history lives in [`CHANGELOG.md`](CHANGELOG.md). The live deployment reports its version through `GET /healthz`.
+
+### Workflow
+
+Before merging into `main`, **any user-facing change** (API behaviour, pricing/rendering logic, CLI/script surface, ops procedure) must:
+
+1. Pick a SemVer level:
+   - `major` — incompatible API changes (URL/payload shape, status code semantics, response field meaning)
+   - `minor` — backward-compatible feature or behaviour additions
+   - `patch` — bug fixes, doc-only or CI-only changes
+2. Run `python3 scripts/bump_version.py --level <major|minor|patch>` to:
+   - Update [`VERSION`](VERSION)
+   - Sync [`pyproject.toml`](pyproject.toml)
+   - Insert a fresh `## X.Y.Z (YYYY-MM-DD)` section at the top of [`CHANGELOG.md`](CHANGELOG.md)
+3. Edit [`CHANGELOG.md`](CHANGELOG.md) by hand to fill in the bullets under the new section (prefix each with `[#PR]` where applicable; see existing entries for style).
+4. `git add VERSION pyproject.toml CHANGELOG.md && git commit -m "chore: bump to X.Y.Z"`
+
+After the PR merges and the ECS auto-deploy cron picks it up (every 4h, or run `quote-auto-deploy.sh` manually), `curl https://<api>/healthz` will report the new `service_version`.
+
+### When NOT to bump
+
+Pure refactors (no externally observable change), comment / typo fixes, test-only changes, `.gitignore`, IDE config. **Rule of thumb: if a caller or operator cannot tell from the API response or runtime behaviour, no bump is needed.**

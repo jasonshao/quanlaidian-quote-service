@@ -7,6 +7,10 @@ def test_healthz(api_client):
     body = resp.json()
     assert body["status"] == "ok"
     assert "pricing_version" in body
+    assert "service_version" in body
+    assert body["service_version"] != "unknown", (
+        "VERSION file unreachable from app.version.service_version()"
+    )
 
 def test_quote_200_returns_files(api_client, sample_form):
     client, token = api_client
