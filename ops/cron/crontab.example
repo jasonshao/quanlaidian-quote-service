@@ -1,0 +1,24 @@
+# 全来店报价服务 — Crontab 配置
+#
+# 安装方式（任选其一）:
+#   方式 A（复制到 /etc/cron.d/）:
+#     cp ops/cron/crontab.example /etc/cron.d/quanlaidian-quote
+#
+#   方式 B（追加到用户 crontab）:
+#     cat ops/cron/crontab.example | sed 's/^MAILTO.*//' | crontab -u deploy -
+#
+# 注意事项:
+#   - 请根据实际部署路径修改 /opt/quanlaidian-quote 为真实路径
+#   - 请根据虚拟环境实际路径修改 .venv/bin/python
+#   - audit-report.sh 需要 QUOTE_DATA_ROOT 环境变量，参见脚本内默认值
+#   - 日志文件需要提前创建并赋予写权限
+
+SHELL=/bin/bash
+PATH=/usr/local/bin:/usr/bin:/bin
+MAILTO=""
+
+# 每日凌晨 6:00 运行调用统计报告
+0 6 * * * deploy /opt/quanlaidian-quote/.venv/bin/python /opt/quanlaidian-quote/ops/audit_report.py >> /var/log/quanlaidian-audit-report.log 2>&1
+
+# 每日凌晨 6:10 清理过期文件（保留最近 7 天）
+10 6 * * * deploy /opt/quanlaidian-quote/ops/cron/cleanup-files.sh >> /var/log/quanlaidian-cleanup.log 2>&1

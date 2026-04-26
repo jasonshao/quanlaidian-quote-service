@@ -106,6 +106,18 @@ def create_quote_legacy(
     duration_ms = int((time.monotonic() - start_time) * 1000)
     pricing_info = config.get("pricing_info", {})
     response_pricing_version = pricing_info.get("algorithm_version") or pricing_version()
+
+    # 扩展审计字段：用于每日产品使用情况统计
+    client_ip = None
+    if request.client:
+        client_ip = request.client.host
+
+    # effective_stores：config 中可能已被替换为大客户段下锚点
+    effective_stores = int(config.get("门店数量", form.门店数量))
+
+    # 标准价合计（list 列之和）
+    list_total = int(preview.totals.list) if preview.totals.list else 0
+
     log_request(settings.data_root / "audit", {
         "ts": datetime.now(timezone.utc).isoformat(),
         "request_id": request_id,
@@ -113,11 +125,18 @@ def create_quote_legacy(
         "org": token_info.org,
         "token_id": token_info.token_id,
         "brand": form.客户品牌名称,
+        "meal_type": form.餐饮类型,
         "stores": form.门店数量,
+        "effective_stores": effective_stores,
         "package": form.门店套餐,
+        "store_modules": form.门店增值模块 or [],
+        "hq_modules": form.总部模块 or [],
+        "list_total": list_total,
         "discount": pricing_info.get("final_factor", 1.0),
         "final": preview.totals.final,
         "pricing_version": response_pricing_version,
+        "route_strategy": pricing_info.get("route_strategy", "unknown"),
+        "client_ip": client_ip,
         "status": "ok",
         "duration_ms": duration_ms,
     })
