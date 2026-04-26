@@ -105,6 +105,7 @@ def create_quote_legacy(
 
     duration_ms = int((time.monotonic() - start_time) * 1000)
     pricing_info = config.get("pricing_info", {})
+    response_pricing_version = pricing_info.get("algorithm_version") or pricing_version()
     log_request(settings.data_root / "audit", {
         "ts": datetime.now(timezone.utc).isoformat(),
         "request_id": request_id,
@@ -116,7 +117,7 @@ def create_quote_legacy(
         "package": form.门店套餐,
         "discount": pricing_info.get("final_factor", 1.0),
         "final": preview.totals.final,
-        "pricing_version": pricing_version(),
+        "pricing_version": response_pricing_version,
         "status": "ok",
         "duration_ms": duration_ms,
     })
@@ -125,5 +126,5 @@ def create_quote_legacy(
         request_id=request_id,
         preview=preview,
         files=files,
-        pricing_version=pricing_version(),
+        pricing_version=response_pricing_version,
     )
