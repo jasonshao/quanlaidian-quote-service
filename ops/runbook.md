@@ -70,7 +70,7 @@
 
 8. Set up TLS:
    ```bash
-   sudo certbot --nginx -d api.quanlaidian.com
+   sudo certbot --nginx -d <your-api-host>
    ```
 
 9. Set up file cleanup cron:
@@ -81,7 +81,7 @@
 
 10. Verify:
     ```bash
-    curl https://api.quanlaidian.com/healthz
+    curl https://<your-api-host>/healthz
     ```
 
 ## Rotating the pricing baseline
