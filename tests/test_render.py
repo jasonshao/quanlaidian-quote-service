@@ -196,12 +196,12 @@ def test_xlsx_tiered_sheet_9_column_layout(empty_baseline):
     assert headers[6].endswith("单价")
     assert headers[7].endswith("小计")
     assert headers[8] == "功能说明"
-    # Bottom three summary rows exist: at least one 小计 + 合计 + 折算单店年费.
+    # Bottom summary rows exist: at least one 小计 + 合计.
     labels = [ws.cell(r, 2).value for r in range(4, ws.max_row + 1)]
     assert "小计" in labels
     assert "合计" in labels
     first_col_last = [ws.cell(r, 1).value for r in range(4, ws.max_row + 1)]
-    assert any(v == "折算单店年费" for v in first_col_last)
+    assert all(v != "折算单店年费" for v in first_col_last)
 
 
 def test_pdf_package_expanded_sub_modules(empty_baseline):

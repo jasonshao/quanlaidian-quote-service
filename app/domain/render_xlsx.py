@@ -1005,24 +1005,6 @@ def _xl_add_tiered_sheet(wb, data):
         cc.alignment = Alignment(horizontal='right', vertical='center')
     _apply_bg((ws.cell(row=current_row, column=col) for col in range(1, 10)), TOTAL_BG)
     ws.row_dimensions[current_row].height = 22
-    current_row += 1
-
-    # 折算单店年费行：A+B 合并
-    ws.merge_cells(start_row=current_row, start_column=1,
-                   end_row=current_row, end_column=2)
-    c = ws.cell(row=current_row, column=1, value='折算单店年费')
-    c.font = Font(name='微软雅黑', bold=True, size=9)
-    c.alignment = Alignment(horizontal='left', vertical='center')
-    for ti, tier in enumerate((tier_low, tier_high)):
-        stores = Decimal(str(tier['门店数']))
-        per_store = (grand_totals[ti] / stores).quantize(Decimal('1'), rounding=ROUND_HALF_UP)
-        col = 6 + ti * 2
-        cc = ws.cell(row=current_row, column=col, value=int(per_store))
-        cc.font = Font(name='微软雅黑', size=9)
-        cc.number_format = '#,##0'
-        cc.alignment = Alignment(horizontal='right', vertical='center')
-    _apply_bg((ws.cell(row=current_row, column=col) for col in range(1, 10)), SUBTOTAL_BG)
-    ws.row_dimensions[current_row].height = 18
 
     _xl_apply_border(ws, 3, 1, current_row, 9)
 
