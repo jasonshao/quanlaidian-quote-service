@@ -4,7 +4,7 @@
 
 全来店产品线的服务端报价系统：独占定价算法、价格基线、PDF/XLSX 渲染、文件存储和审计日志，把客户端缩成一段 HTTP 包装。
 
-**版本：** 1.0.0　**运行环境：** Python 3.10+ · FastAPI · uvicorn · SQLite
+**版本：** 见 [`VERSION`](VERSION) 与 [`CHANGELOG.md`](CHANGELOG.md);线上版本通过 `GET /healthz` 实时查询。**运行环境:** Python 3.10+ · FastAPI · uvicorn · SQLite
 
 ---
 
@@ -82,8 +82,10 @@ python -m app.cli migrate-tokens-json          # 一次性：把旧 data/tokens.
 健康检查 — 无需鉴权。
 
 ```json
-{ "status": "ok", "pricing_version": "small-segment-v2.3" }
+{ "status": "ok", "service_version": "1.1.0", "pricing_version": "small-segment-v2.3" }
 ```
+
+`service_version` 来自仓库根目录 [`VERSION`](VERSION) 文件,可作为运维 / 调用方确认线上部署版本的唯一权威来源。`pricing_version` 是定价算法版本(随路由策略变化,见 [`/v1/quote`](#post-v1quote--算价--渲染-pdfxlsxjson) 响应中的同名字段)。
 
 ### GET /files/{token}/{filename}
 
@@ -368,3 +370,30 @@ python -m app.cli revoke-token --id tok_xxxxxxxx
 python -m app.cli add-token --org staging --expires-in 30d   # 自定义过期
 python -m app.cli add-token --org admin --no-expire          # 永不过期
 ```
+
+---
+
+## 发版与变更日志
+
+本仓库采用 [SemVer](https://semver.org/lang/zh-CN/)(`MAJOR.MINOR.PATCH`)。版本号记录在仓库根目录的 [`VERSION`](VERSION) 文件,与 [`pyproject.toml`](pyproject.toml) 的 `[project].version` 保持一致(由 `tests/test_version.py` 守门)。完整变更记录见 [`CHANGELOG.md`](CHANGELOG.md);线上当前版本可用 `GET /healthz` 实时查询(`service_version` 字段)。
+
+### 工作流
+
+每次合并到 `main` 之前,**任何用户可感知的改动**(API 行为变化、报价/渲染逻辑变化、CLI/脚本签名变化、运维流程变化)必须:
+
+1. 决定语义级别:
+   - `major`——不兼容的 API 变更(URL/payload 结构、status code 语义、响应字段含义改变)
+   - `minor`——向后兼容的功能/行为新增
+   - `patch`——bug 修复或纯文档/CI 调整
+2. 跑 `python3 scripts/bump_version.py --level <major|minor|patch>` 自动:
+   - 更新 [`VERSION`](VERSION)
+   - 同步 [`pyproject.toml`](pyproject.toml)
+   - 在 [`CHANGELOG.md`](CHANGELOG.md) 顶部插入新版本骨架(`## X.Y.Z (YYYY-MM-DD)`)
+3. 手工编辑 [`CHANGELOG.md`](CHANGELOG.md),在新版本骨架下补完实际条目(每条以 `[#PR号]` 前缀,参考已有条目)
+4. `git add VERSION pyproject.toml CHANGELOG.md && git commit -m "chore: bump to X.Y.Z"`
+
+ECS 自动部署脚本下次拉取后(每 4 小时一次或手工触发),客户端 `curl https://<api>/healthz` 即可看到 `service_version` 已切到新版本。
+
+### 不需要 bump 的变更
+
+纯重构(无外部行为变化)、注释 / typo、测试本身的调整、`.gitignore`、IDE 配置等。**判断标准:调用方或运维能否从 API 响应或线上行为感知到这次变化。** 仅改 `tests/`、`docs/` 注解、CI 配置等不需要 bump。
