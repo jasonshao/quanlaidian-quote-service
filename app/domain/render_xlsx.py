@@ -24,7 +24,6 @@ from app.domain.render_pdf import (
     get_tier_unit_price,
     number_to_chinese,
     gen_quote_number,
-    calc_actual_price,
     fmt_pct,
     _LOGO_SHOUQIANBA,
     _LOGO_QUANLAIDIAN,
@@ -655,26 +654,6 @@ def _generate_xlsx_custom(data):
         elif cat != '硬件设备':
             categories['门店软件套餐'].append(item)
 
-    # ── 各分类 Sheet ──
-    def _override_items(src_items, deal_price_factor, qty=1):
-        """返回 qty/商品单价 覆盖后的副本（刊例价展示用）"""
-        result = []
-        for it in src_items:
-            ni = dict(it)
-            ni['数量'] = qty
-            if ni.get('标准价') not in ('赠送', None):
-                if ni.get('模块分类') == '门店软件套餐':
-                    unit_price = calc_actual_price(ni.get('标准价'), deal_price_factor)
-                    ni['deal_price_factor'] = deal_price_factor
-                    ni['成交价系数'] = deal_price_factor
-                    ni['折扣'] = round(1 - deal_price_factor, 6)
-                    ni['商品单价'] = int(unit_price)
-                subtotal = get_item_unit_price(ni)
-                if subtotal != '赠送':
-                    ni['报价小计'] = int((subtotal * Decimal(str(qty))).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
-            result.append(ni)
-        return result
-
     MERGED_SHEET_CATS = ['门店软件套餐', '门店增值模块']
     cat_totals = {}
 
@@ -707,8 +686,7 @@ def _generate_xlsx_custom(data):
             ws_merged.row_dimensions[section_row].height = 18
             section_row += 1
 
-            display_items = _override_items(cat_items, deal_price_factor=0.8, qty=1)
-            _, total_row = _xl_write_item_table(ws_merged, display_items, section_row, compute_values=True)
+            _, total_row = _xl_write_item_table(ws_merged, cat_items, section_row, compute_values=True)
             cat_totals[cat_name] = (f'G{total_row}', ws_merged.title)
             section_row = total_row + 2
 
@@ -725,8 +703,7 @@ def _generate_xlsx_custom(data):
         _xl_title_style(c, size=14)
         ws.row_dimensions[2].height = 30
         ws.row_dimensions[3].height = 8
-        display_items = _override_items(categories['总部模块'], deal_price_factor=0.8, qty=1)
-        _, total_row = _xl_write_item_table(ws, display_items, 4, compute_values=True)
+        _, total_row = _xl_write_item_table(ws, categories['总部模块'], 4, compute_values=True)
         ws.freeze_panes = 'A5'
         cat_totals['总部模块'] = (f'G{total_row}', ws.title)
 
@@ -741,8 +718,7 @@ def _generate_xlsx_custom(data):
         _xl_title_style(c, size=14)
         ws.row_dimensions[2].height = 30
         ws.row_dimensions[3].height = 8
-        display_items = _override_items(categories['实施服务'], deal_price_factor=1.0, qty=1)
-        _, total_row = _xl_write_item_table(ws, display_items, 4, compute_values=True)
+        _, total_row = _xl_write_item_table(ws, categories['实施服务'], 4, compute_values=True)
         ws.freeze_panes = 'A5'
         cat_totals['实施服务'] = (f'G{total_row}', ws.title)
 
