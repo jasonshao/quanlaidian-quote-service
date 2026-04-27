@@ -295,3 +295,102 @@ def test_pdf_package_expanded_sub_modules(empty_baseline):
     assert "商户中心" in text
     assert "点餐收银" in text
     assert "平台小程序" in text
+
+
+# ============================================================
+# Regression: XLSX 大客户段主明细 sheet 必须基于 config 真实金额，
+# 不再使用硬编码 "刊例价 qty=1, factor=0.8" 覆盖。
+# 历史 bug：30 店套餐被显示为 数量=1、单价=7920、小计=7920，
+# 而 PDF / 阶梯参考 sheet 显示真实 数量=30、单价=1584、小计=47520。
+# ============================================================
+def _make_large_segment_config(empty_baseline):
+    config = _build_config_with_descriptions("form_full_meal_10_stores.json", empty_baseline)
+    config["门店数量"] = 100
+    config["pricing_info"]["route_strategy"] = "large-segment"
+    return config
+
+
+def test_xlsx_custom_main_sheet_uses_config_quote_values(empty_baseline):
+    """大客户段「门店软件与增值」sheet 套餐主行的 数量/单价/小计 必须等于 config 字段，
+    而不是被硬编码为 数量=1、商品单价=标准价×0.8。"""
+    import openpyxl, io
+    config = _make_large_segment_config(empty_baseline)
+    xlsx_bytes = render_xlsx(config)
+    wb = openpyxl.load_workbook(io.BytesIO(xlsx_bytes))
+
+    assert "门店软件与增值" in wb.sheetnames
+    ws = wb["门店软件与增值"]
+
+    pkg = next(it for it in config["报价项目"] if it.get("模块分类") == "门店软件套餐")
+    pkg_name = pkg["商品名称"]
+    pkg_row = next(
+        r for r in range(1, ws.max_row + 1)
+        if ws.cell(r, 3).value == pkg_name
+    )
+
+    assert ws.cell(pkg_row, 5).value == int(pkg["数量"]), \
+        f"数量应等于 config 数量 {pkg['数量']}，bug 时被硬编码为 1"
+    assert ws.cell(pkg_row, 6).value == int(pkg["商品单价"]), \
+        f"商品单价应等于 config 商品单价 {pkg['商品单价']}，bug 时被算成 标准价×0.8"
+    assert ws.cell(pkg_row, 7).value == int(pkg["报价小计"]), \
+        f"小计应等于 config 报价小计 {pkg['报价小计']}，bug 时等于 单价×1"
+
+
+def test_xlsx_custom_hq_sheet_respects_config_qty(empty_baseline):
+    """总部模块 sheet 的数量列必须读 config 里的 数量字段，"""
+    """注入一个 数量=3 的总部项以触发非 1 路径。"""
+    import openpyxl, io
+    config = _make_large_segment_config(empty_baseline)
+    config.setdefault("报价项目", []).append({
+        "商品分类": "总部模块",
+        "商品名称": "测试总部多数量项",
+        "单位": "套/年",
+        "标准价": 1000,
+        "数量": 3,
+        "商品单价": 1000,
+        "报价小计": 3000,
+        "模块分类": "总部模块",
+        "deal_price_factor": 1.0,
+        "成交价系数": 1.0,
+        "折扣": 0.0,
+    })
+    xlsx_bytes = render_xlsx(config)
+    wb = openpyxl.load_workbook(io.BytesIO(xlsx_bytes))
+
+    assert "总部模块" in wb.sheetnames
+    ws = wb["总部模块"]
+
+    target_row = next(
+        r for r in range(1, ws.max_row + 1)
+        if ws.cell(r, 3).value == "测试总部多数量项"
+    )
+    assert ws.cell(target_row, 5).value == 3, "qty 应保留 config 中的 3"
+    assert ws.cell(target_row, 6).value == 1000
+    assert ws.cell(target_row, 7).value == 3000, "小计 应等于 数量×单价"
+
+
+def test_xlsx_main_sheets_total_matches_config_quote_total(empty_baseline):
+    """大客户段所有主明细 sheet（门店软件与增值 / 总部模块 / 实施服务）的数据行
+    G 列总和应等于 config['internal_financials']['quote_total']，
+    即 Excel 的真实成交价合计与配置中的 quote_total 完全一致。"""
+    import openpyxl, io
+    from decimal import Decimal
+    config = _make_large_segment_config(empty_baseline)
+    xlsx_bytes = render_xlsx(config)
+    wb = openpyxl.load_workbook(io.BytesIO(xlsx_bytes), data_only=False)
+
+    total = 0
+    for sheet_name in ("门店软件与增值", "总部模块", "实施服务"):
+        if sheet_name not in wb.sheetnames:
+            continue
+        ws = wb[sheet_name]
+        for r in range(1, ws.max_row + 1):
+            a_val = ws.cell(r, 1).value
+            g_val = ws.cell(r, 7).value
+            # 数据行：A 列是 int 序号；合计行 A 列是 "合计"，子项行 A 列空。
+            if isinstance(a_val, int) and isinstance(g_val, (int, float)):
+                total += g_val
+
+    expected = config["internal_financials"]["quote_total"]
+    assert total == expected, \
+        f"主明细 sheet G 列累加 = {total}，应等于 quote_total = {expected}"
