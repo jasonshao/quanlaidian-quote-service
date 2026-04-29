@@ -55,6 +55,64 @@ HQ_MODULE_DEFAULT_QTY_ONE = {
     "企业微信SCRM",
 }
 
+# 不同 SKU 但功能域互斥，不允许同时出现在同一份报价里。
+# 例：「单门店库存」（旗舰版 ZC-04 子项，单店本地模式）与「供应链基础-门店点位」
+# （供应链版 ZC-05 子项 / 可单独加购，接入配送中心+跨店调拨）是两条互斥业务路线，
+# 客户应当二选一。新增互斥关系只需追加 frozenset 即可。
+MUTUALLY_EXCLUSIVE_MODULES: tuple[frozenset[str], ...] = (
+    frozenset({"单门店库存", "供应链基础-门店点位"}),
+)
+
+# 总部模块 → 必须存在的门店端依赖模块。
+# 业务原因：配送中心负责中心集采/库存/订货/配送规则，必须由门店端的
+# 「供应链基础-门店点位」承接订货与收货。门店端缺失此模块时，配送中心
+# 无法落地。门店端模块来源不限：套餐自带子项 或 门店增值模块均可。
+HQ_MODULE_STORE_DEPENDENCIES: dict[str, str] = {
+    "配送中心": "供应链基础-门店点位",
+}
+
+
+def _check_module_conflicts(package_sub_names: set[str], addon_module_names: list[str]) -> None:
+    """套餐子项 vs 门店增值模块的冲突校验：
+      (a) 增值模块直接重复了套餐自带的同名 SKU；
+      (b) 增值模块与套餐子项命中 MUTUALLY_EXCLUSIVE_MODULES 互斥对。
+    任一命中抛 ValueError，由调用方/前端展示给销售。
+    """
+    addon_set = set(addon_module_names)
+    duplicates = addon_set & package_sub_names
+    if duplicates:
+        names = "、".join(sorted(duplicates))
+        raise ValueError(
+            f"门店增值模块「{names}」已包含在所选套餐中，不能重复购买"
+        )
+    combined = package_sub_names | addon_set
+    for pair in MUTUALLY_EXCLUSIVE_MODULES:
+        clash = pair & combined
+        if len(clash) >= 2:
+            names = "、".join(sorted(clash))
+            raise ValueError(
+                f"模块「{names}」业务上互斥（单店库存 vs 供应链门店点位为两条互斥路线），不能同时出现在同一份报价中"
+            )
+
+
+def _check_hq_store_dependencies(
+    package_sub_names: set[str],
+    addon_module_names: list[str],
+    hq_module_names: list[str],
+) -> None:
+    """总部模块 → 门店端依赖模块校验。
+    例：勾选「配送中心」时，门店端必须有「供应链基础-门店点位」（套餐自带或加购均可）。
+    缺失则抛 ValueError，提示销售补齐门店端模块或换用已含的套餐。
+    """
+    store_modules = package_sub_names | set(addon_module_names)
+    for hq_module in hq_module_names:
+        required = HQ_MODULE_STORE_DEPENDENCIES.get(hq_module)
+        if required and required not in store_modules:
+            raise ValueError(
+                f"总部模块「{hq_module}」依赖门店端「{required}」，"
+                f"请在门店增值模块勾选「{required}」，或改用已含该模块的门店套餐"
+            )
+
 
 def is_protected_product(product_name):
     return any(keyword in str(product_name) for keyword in PROTECTED_PRODUCT_NAMES)
@@ -973,11 +1031,37 @@ def build_quotation_config(form: dict, baseline: dict, product_catalog_path: Pat
         description=package_desc, sub_items=package_subs,
     ))
 
+    package_sub_names = {sub.get("商品名称") for sub in package_subs if sub.get("商品名称")}
+    _check_module_conflicts(package_sub_names, form.get("门店增值模块", []))
+    _check_hq_store_dependencies(
+        package_sub_names, form.get("门店增值模块", []), form.get("总部模块", [])
+    )
+
     for module_name in form.get("门店增值模块", []):
         module = lookup_product(product_index, module_name, meal_type=meal_type, group="门店增值模块")
         category = "保护类商品" if is_protected_product(module["name"]) else "增值模块"
         standard_price, cost_price, _ = resolve_product_pricing(module, meal_type, baseline_index)
         items.append(build_quote_item(module, standard_price, cost_price, store_count, deal_price_factor, category, "门店增值模块", description=_desc_for(module)))
+
+    # 电子发票接口 → 自动追加「电子发票-税号」一行（issue #8 联动规则，
+    # 历史回归：4d5ed02 实现，3a19708 HQ 模块重构时被误删，此处恢复）。
+    # 数量取 form["税号数量"]，缺失/非法时按 schema 默认 1。
+    if "电子发票接口" in form.get("门店增值模块", []):
+        tax_id_product = lookup_product(product_index, "电子发票-税号", meal_type=meal_type, group="门店增值模块")
+        tax_id_standard, tax_id_cost, _ = resolve_product_pricing(tax_id_product, meal_type, baseline_index)
+        try:
+            tax_id_qty = int(form.get("税号数量", 1) or 1)
+        except (TypeError, ValueError):
+            tax_id_qty = 1
+        if tax_id_qty < 1:
+            tax_id_qty = 1
+        tax_id_category = "保护类商品" if is_protected_product(tax_id_product["name"]) else "增值模块"
+        items.append(build_quote_item(
+            tax_id_product, tax_id_standard, tax_id_cost,
+            tax_id_qty, deal_price_factor,
+            tax_id_category, "门店增值模块",
+            description=_desc_for(tax_id_product),
+        ))
 
     for module_name in form.get("总部模块", []):
         quantity_field = HQ_MODULE_QUANTITY_FIELDS.get(module_name)
