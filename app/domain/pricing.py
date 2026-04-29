@@ -71,12 +71,25 @@ HQ_MODULE_STORE_DEPENDENCIES: dict[str, str] = {
     "配送中心": "供应链基础-门店点位",
 }
 
+# 旗舰版套餐 → 推荐改选的「全能版」套餐。当销售把旗舰版（自带「单门店库存」，
+# 单店本地模式）与连锁供应链类总部模块/增值模块组合时，正确业务路线是改选
+# 同价位的全能版 + 加购「供应链基础-门店点位」增值模块（+2600 元/店/年）。
+FLAGSHIP_TO_ALLROUND_REROUTE: dict[str, str] = {
+    "正餐连锁营销旗舰版": "正餐连锁营销全能版",
+    "轻餐连锁营销旗舰版": "轻餐连锁营销全能版",
+}
 
-def _check_module_conflicts(package_sub_names: set[str], addon_module_names: list[str]) -> None:
+
+def _check_module_conflicts(
+    package_name: str,
+    package_sub_names: set[str],
+    addon_module_names: list[str],
+) -> None:
     """套餐子项 vs 门店增值模块的冲突校验：
       (a) 增值模块直接重复了套餐自带的同名 SKU；
       (b) 增值模块与套餐子项命中 MUTUALLY_EXCLUSIVE_MODULES 互斥对。
     任一命中抛 ValueError，由调用方/前端展示给销售。
+    旗舰版命中互斥时，文案会引导改选同价位的「全能版」+「供应链基础-门店点位」。
     """
     addon_set = set(addon_module_names)
     duplicates = addon_set & package_sub_names
@@ -89,6 +102,15 @@ def _check_module_conflicts(package_sub_names: set[str], addon_module_names: lis
     for pair in MUTUALLY_EXCLUSIVE_MODULES:
         clash = pair & combined
         if len(clash) >= 2:
+            allround = FLAGSHIP_TO_ALLROUND_REROUTE.get(package_name)
+            if allround and pair == frozenset({"单门店库存", "供应链基础-门店点位"}):
+                raise ValueError(
+                    f"「{package_name}」自带「单门店库存」（单店本地模式），不能再勾选"
+                    f"增值模块「供应链基础-门店点位」（连锁供应链路线）。如需配送中心/"
+                    f"跨店调拨等连锁能力，请改选「{allround}」并保留「供应链基础-门店点位」"
+                    f"增值模块（+2600 元/店/年）；如保持单店模式，请去掉「供应链基础-"
+                    f"门店点位」增值模块。"
+                )
             names = "、".join(sorted(clash))
             raise ValueError(
                 f"模块「{names}」业务上互斥（单店库存 vs 供应链门店点位为两条互斥路线），不能同时出现在同一份报价中"
@@ -96,6 +118,7 @@ def _check_module_conflicts(package_sub_names: set[str], addon_module_names: lis
 
 
 def _check_hq_store_dependencies(
+    package_name: str,
     package_sub_names: set[str],
     addon_module_names: list[str],
     hq_module_names: list[str],
@@ -103,11 +126,25 @@ def _check_hq_store_dependencies(
     """总部模块 → 门店端依赖模块校验。
     例：勾选「配送中心」时，门店端必须有「供应链基础-门店点位」（套餐自带或加购均可）。
     缺失则抛 ValueError，提示销售补齐门店端模块或换用已含的套餐。
+    旗舰版（自带「单门店库存」）+ 配送中心 时，文案会引导改选同价位的全能版。
     """
     store_modules = package_sub_names | set(addon_module_names)
     for hq_module in hq_module_names:
         required = HQ_MODULE_STORE_DEPENDENCIES.get(hq_module)
         if required and required not in store_modules:
+            allround = FLAGSHIP_TO_ALLROUND_REROUTE.get(package_name)
+            if (
+                allround
+                and hq_module == "配送中心"
+                and "单门店库存" in package_sub_names
+            ):
+                raise ValueError(
+                    f"总部模块「配送中心」需要门店端「供应链基础-门店点位」承接订货与收货。"
+                    f"当前所选「{package_name}」自带「单门店库存」（单店本地模式），与"
+                    f"配送中心互斥。请改选「{allround}」并勾选「供应链基础-门店点位」"
+                    f"增值模块（+2600 元/店/年），或改用「正餐连锁供应链版」/"
+                    f"「轻餐连锁供应链版」（已自带门店点位）。"
+                )
             raise ValueError(
                 f"总部模块「{hq_module}」依赖门店端「{required}」，"
                 f"请在门店增值模块勾选「{required}」，或改用已含该模块的门店套餐"
@@ -1032,9 +1069,9 @@ def build_quotation_config(form: dict, baseline: dict, product_catalog_path: Pat
     ))
 
     package_sub_names = {sub.get("商品名称") for sub in package_subs if sub.get("商品名称")}
-    _check_module_conflicts(package_sub_names, form.get("门店增值模块", []))
+    _check_module_conflicts(package["name"], package_sub_names, form.get("门店增值模块", []))
     _check_hq_store_dependencies(
-        package_sub_names, form.get("门店增值模块", []), form.get("总部模块", [])
+        package["name"], package_sub_names, form.get("门店增值模块", []), form.get("总部模块", [])
     )
 
     for module_name in form.get("门店增值模块", []):

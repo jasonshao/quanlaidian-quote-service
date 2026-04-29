@@ -520,11 +520,12 @@ def test_build_quotation_config_without_descriptions_skips_annotation(empty_base
 # 套餐子项 vs 门店增值模块 冲突校验
 # ============================================================
 def test_mutually_exclusive_supply_chain_with_flagship_rejected(empty_baseline):
-    """ZC-04 旗舰版自带"单门店库存"，再勾选"供应链基础-门店点位"应被拒绝。"""
+    """ZC-04 旗舰版自带"单门店库存"，再勾选"供应链基础-门店点位"应被拒绝，
+    且文案应引导改选同价位「正餐连锁营销全能版」+ 增值模块。"""
     form = _load_form("form_full_meal_10_stores.json")
     desc = _load_descriptions()
     form["门店增值模块"] = ["供应链基础-门店点位"]
-    with pytest.raises(ValueError, match="互斥"):
+    with pytest.raises(ValueError, match="改选「正餐连锁营销全能版」"):
         build_quotation_config(form, empty_baseline, LOCAL_CATALOG, descriptions=desc)
 
 
@@ -553,13 +554,13 @@ def test_non_conflicting_addon_still_works(empty_baseline):
 # ============================================================
 def test_delivery_center_requires_supply_chain_store_module(empty_baseline):
     """配送中心必须配「供应链基础-门店点位」。ZC-04 旗舰版自带「单门店库存」，
-    单纯加配送中心而门店端没有供应链门店点位时应被拒。"""
+    单纯加配送中心而门店端没有供应链门店点位时应被拒，且文案应引导改选全能版。"""
     form = _load_form("form_with_delivery_center.json")
     form["门店套餐"] = "正餐连锁营销旗舰版"
     form["餐饮类型"] = "正餐"
     form["门店增值模块"] = []
     desc = _load_descriptions()
-    with pytest.raises(ValueError, match="供应链基础-门店点位"):
+    with pytest.raises(ValueError, match="改选「正餐连锁营销全能版」"):
         build_quotation_config(form, empty_baseline, LOCAL_CATALOG, descriptions=desc)
 
 
@@ -573,3 +574,24 @@ def test_delivery_center_satisfied_by_package_sub(empty_baseline):
     config = build_quotation_config(form, empty_baseline, LOCAL_CATALOG, descriptions=desc)
     item_names = [item["商品名称"] for item in config["报价项目"]]
     assert "配送中心" in item_names
+
+
+def test_qc04_flagship_mutex_with_supply_chain_addon_rejected(empty_baseline):
+    """轻餐 QC-04 旗舰版 + 增值模块「供应链基础-门店点位」应报错并指引改选全能版。"""
+    form = _load_form("form_light_meal_5_stores.json")
+    form["门店套餐"] = "轻餐连锁营销旗舰版"
+    form["门店增值模块"] = ["供应链基础-门店点位"]
+    desc = _load_descriptions()
+    with pytest.raises(ValueError, match="改选「轻餐连锁营销全能版」"):
+        build_quotation_config(form, empty_baseline, LOCAL_CATALOG, descriptions=desc)
+
+
+def test_qc04_flagship_with_delivery_center_rejected(empty_baseline):
+    """轻餐 QC-04 旗舰版 + 配送中心（无增值模块）应报错并指引改选全能版。"""
+    form = _load_form("form_with_delivery_center.json")
+    form["餐饮类型"] = "轻餐"
+    form["门店套餐"] = "轻餐连锁营销旗舰版"
+    form["门店增值模块"] = []
+    desc = _load_descriptions()
+    with pytest.raises(ValueError, match="改选「轻餐连锁营销全能版」"):
+        build_quotation_config(form, empty_baseline, LOCAL_CATALOG, descriptions=desc)
