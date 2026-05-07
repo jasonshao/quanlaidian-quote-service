@@ -18,6 +18,12 @@ from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from app.timezone import EAST_8, today_east8  # noqa: E402
+
 # 数据根目录：优先读取环境变量，与 app/config.py 保持一致
 DATA_ROOT = Path(os.environ.get("QUOTE_DATA_ROOT", "data"))
 AUDIT_DIR = DATA_ROOT / "audit"
@@ -36,6 +42,19 @@ def parse_ts(ts_str: str) -> datetime | None:
         return None
 
 
+def audit_log_dates_to_check(hours: int, now: datetime | None = None) -> list[str]:
+    """Return UTC+08:00 audit log date names that can contain the window."""
+    now = now or utc_now()
+    cutoff = now - timedelta(hours=hours)
+    start_day = cutoff.astimezone(EAST_8).date()
+    end_day = now.astimezone(EAST_8).date()
+    day_count = (end_day - start_day).days + 1
+    return [
+        (end_day - timedelta(days=i)).isoformat()
+        for i in range(day_count)
+    ]
+
+
 def read_audit_records(hours: int = 24) -> list[dict]:
     """读取过去 N 小时内所有审计日志记录。"""
     cutoff = utc_now() - timedelta(hours=hours)
@@ -44,13 +63,11 @@ def read_audit_records(hours: int = 24) -> list[dict]:
     if not AUDIT_DIR.exists():
         return records
 
-    # 读取最近 N 天的日志文件（避免跨文件边界漏数据）
-    days_to_check = hours // 24 + 2
-    today = utc_now().date()
-
-    for i in range(days_to_check):
-        day = today - timedelta(days=i)
-        log_file = AUDIT_DIR / f"{day.isoformat()}.jsonl"
+    # Audit files are named by UTC+08:00 calendar date. Include the whole
+    # UTC+08:00 date range overlapping the UTC timestamp cutoff window so
+    # records written to tomorrow's local file are not skipped.
+    for day in audit_log_dates_to_check(hours):
+        log_file = AUDIT_DIR / f"{day}.jsonl"
         if not log_file.exists():
             continue
         try:
@@ -152,9 +169,11 @@ def generate_report(records: list[dict], hours: int = 24) -> str:
     lines = []
     lines.append("# 全来店报价服务 · 每日调用报告")
     lines.append("")
-    lines.append(f"**统计周期**: {cutoff.strftime('%Y-%m-%d %H:%M')} ~ {now.strftime('%Y-%m-%d %H:%M')} (UTC+0)")
-    lines.append(f"**生成时间**: {now.strftime('%Y-%m-%d %H:%M:%S')} (UTC+0)")
-    lines.append(f"**脚本版本**: v1.0.0")
+    cutoff_east8 = cutoff.astimezone(EAST_8)
+    now_east8 = now.astimezone(EAST_8)
+    lines.append(f"**统计周期**: {cutoff_east8.strftime('%Y-%m-%d %H:%M')} ~ {now_east8.strftime('%Y-%m-%d %H:%M')} (UTC+8)")
+    lines.append(f"**生成时间**: {now_east8.strftime('%Y-%m-%d %H:%M:%S')} (UTC+8)")
+    lines.append("**脚本版本**: v1.0.0")
     lines.append("")
     lines.append("---")
     lines.append("")
@@ -313,7 +332,7 @@ def generate_report(records: list[dict], hours: int = 24) -> str:
 def save_report(content: str, report_dir: Path) -> Path:
     """将报告保存到 reports/ 目录。"""
     report_dir.mkdir(parents=True, exist_ok=True)
-    today = utc_now().strftime("%Y-%m-%d")
+    today = today_east8(utc_now())
     filename = f"audit-report-{today}.md"
     path = report_dir / filename
     path.write_text(content, encoding="utf-8")
