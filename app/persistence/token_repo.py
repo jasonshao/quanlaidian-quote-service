@@ -13,8 +13,8 @@ Public surface:
     touch_last_used(conn, id, day) → update last_used_on if not already
                                       today; day-sampled to minimise writes
 
-Time is injected (`now=` / `today=`) for deterministic tests; callers in
-production pass UTC `datetime.now()` derivatives.
+Time is injected (`now=` / `today=`) for deterministic tests; timestamp
+fields use UTC, while default day-sampled dates use UTC+08:00.
 """
 from __future__ import annotations
 
@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from app.persistence.models import ApiToken
+from app.timezone import today_east8
 
 
 def hash_token(plaintext: str) -> str:
@@ -139,10 +140,10 @@ def touch_last_used(
 ) -> None:
     """Update last_used_on to `today` iff it's not already `today`.
 
-    Day-sampled: at most one write per token per UTC day. Silent no-op
+    Day-sampled: at most one write per token per UTC+08:00 day. Silent no-op
     if the token_id doesn't exist.
     """
-    today = today or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = today or today_east8()
     conn.execute(
         """
         UPDATE api_token

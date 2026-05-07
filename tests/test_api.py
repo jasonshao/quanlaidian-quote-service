@@ -1,4 +1,5 @@
-import pytest
+from app.timezone import today_east8
+
 
 def test_healthz(api_client):
     client, _ = api_client
@@ -189,7 +190,6 @@ def test_quote_persists_to_db(api_client, sample_form, test_data_root):
 def test_quote_audit_log_includes_token_id(api_client, sample_form, test_data_root):
     """Audit records must identify which token made each request."""
     import json as _json
-    from datetime import datetime, timezone
     client, token = api_client
     resp = client.post(
         "/v1/quote",
@@ -198,10 +198,10 @@ def test_quote_audit_log_includes_token_id(api_client, sample_form, test_data_ro
     )
     assert resp.status_code == 200
 
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = today_east8()
     audit_file = test_data_root / "audit" / f"{today}.jsonl"
     assert audit_file.exists(), f"audit file missing: {audit_file}"
-    lines = [l for l in audit_file.read_text().splitlines() if l.strip()]
+    lines = [line for line in audit_file.read_text().splitlines() if line.strip()]
     assert lines, "audit log is empty"
     record = _json.loads(lines[-1])
     assert "token_id" in record
