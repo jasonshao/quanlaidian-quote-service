@@ -6,9 +6,9 @@ provides a FastAPI dependency factory `verify_token(db_path)` that:
 1. Parses `Authorization: Bearer <plaintext>`.
 2. Looks up sha256(plaintext) in the table.
 3. Rejects revoked / expired / unknown hashes with 401.
-4. On success, updates `last_used_on` to today (day-sampled in-process so
-   the same token authenticated multiple times the same day writes to the
-   DB only once).
+4. On success, updates `last_used_on` to today in UTC+08:00
+   (day-sampled in-process so the same token authenticated multiple times the
+   same day writes to the DB only once).
 
 The `TokenInfo` returned to handlers carries `org` (for resource isolation)
 and `token_id` (for audit trails).
@@ -18,13 +18,13 @@ from __future__ import annotations
 import sqlite3
 import threading
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import HTTPException, Request
 
 from app.persistence.db import get_conn
 from app.persistence.token_repo import find_active_by_hash, hash_token, touch_last_used
+from app.timezone import today_east8
 
 
 @dataclass
@@ -78,7 +78,7 @@ def verify_token(db_path: Path):
                 if row is None:
                     raise HTTPException(status_code=401, detail="Unauthorized")
 
-                today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                today = today_east8()
                 if _mark_touched(row.token_id, today):
                     touch_last_used(conn, row.token_id, today=today)
 

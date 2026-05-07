@@ -1,7 +1,7 @@
 import json
-from pathlib import Path
 from datetime import datetime, timezone
 from app.audit import log_request
+from app.timezone import today_east8
 
 
 def test_log_request_creates_jsonl(tmp_path):
@@ -20,7 +20,7 @@ def test_log_request_creates_jsonl(tmp_path):
     }
     log_request(tmp_path, record)
 
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = today_east8()
     log_file = tmp_path / f"{today}.jsonl"
     assert log_file.exists()
 
@@ -35,7 +35,7 @@ def test_log_request_appends(tmp_path):
     log_request(tmp_path, record1)
     log_request(tmp_path, record2)
 
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = today_east8()
     log_file = tmp_path / f"{today}.jsonl"
     lines = log_file.read_text(encoding="utf-8").strip().split("\n")
     assert len(lines) == 2
