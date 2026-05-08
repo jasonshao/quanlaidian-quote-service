@@ -8,7 +8,7 @@ COPY references/ ./references/
 COPY data/logos/ ./data/logos/
 
 RUN mkdir -p data/files data/audit data/fonts \
- && pip install --no-cache-dir .
+ && pip install --no-cache-dir -i https://mirrors.aliyun.com/pypi/simple/ .    
  
 EXPOSE 8000
 
